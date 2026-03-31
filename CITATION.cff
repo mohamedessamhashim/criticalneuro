@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it using the metadata below."
+type: software
+authors:
+  - family-names: Hashim
+    given-names: Mohamed Essam
+title: "CriticalNeuroMap: Dynamic Network Biomarker and Critical Slowing Down in Proteomics for Neurodegenerative Disease Transitions"
+version: 2.0.0
+date-released: 2026-03-25
+license: MIT
+abstract: >
+  CriticalNeuroMap applies Dynamic Network Biomarker (DNB) analysis and Critical Slowing Down
+  (CSD) theory to high-dimensional SomaScan proteomics data from ADNI and PPMI to detect
+  early warning signals of neurodegenerative disease transitions. The pipeline produces
+  stage-level DNB scores, per-participant single-sample DNB (sDNB) scores, and
+  cross-disease protein overlap analysis across Alzheimer's disease and Parkinson's disease.
+keywords:
+  - proteomics
+  - dynamic network biomarker
+  - critical slowing down
+  - Alzheimer's disease
+  - Parkinson's disease
+  - ADNI
+  - PPMI
+  - SomaScan
+  - tipping point
+  - early warning signals

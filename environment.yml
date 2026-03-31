@@ -1,0 +1,15 @@
+name: criticalneuro
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - r-base=4.4.3
+  - r-arrow=16.1.0
+  - r-essentials=4.4
+  - bioconductor-sva=3.52.0
+  - bioconductor-fgsea=1.30.0
+  - pip
+  - pip:
+    - -r requirements.txt

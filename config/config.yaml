@@ -1,0 +1,160 @@
+random_seed: 42
+
+paths:
+  project_root: "."
+  raw_adni: "data/raw/ADNI"
+  raw_ppmi: "data/raw/PPMI"
+  processed: "data/processed"
+  results: "data/results"
+  results_csd: "data/results/csd"
+  results_dnb: "data/results/dnb"
+  results_validation: "data/results/validation"
+  results_ppmi: "data/results/ppmi"
+  results_figures: "data/results/figures"
+  reference: "data/reference"
+  adni_olink_dir: "data/raw/ADNI/ADNI_Olink"
+  ppmi_olink_dir: "data/raw/PPMI/PPMI_Olink"
+  olink_uniprot_map: "data/reference/olink_uniprot_map.csv"
+  platform_protein_overlap: "data/reference/platform_protein_overlap.csv"
+  adni_olink_clean_parquet: "data/processed/adni_olink_clean.parquet"
+  ppmi_olink_clean_parquet: "data/processed/ppmi_olink_clean.parquet"
+  results_dnb_somascan: "data/results/dnb/somascan"
+  results_dnb_olink: "data/results/dnb/olink"
+  results_cross_platform: "data/results/cross_platform"
+  somascan_uniprot_map: "data/reference/somascan_uniprot_map.csv"
+  msigdb_hallmark: "data/reference/msigdb_hallmark.gmt"
+  reactome_pathways: "data/reference/reactome_pathways.gmt"
+  adnimerge_csv: "data/raw/ADNI/ADNIMERGE.csv"
+  adni_somascan_dir: "data/raw/ADNI/ADNI_SomaScan"
+  adni_biomarkers_dir: "data/raw/ADNI/ADNI_Biomarkers"
+  ppmi_clinical_dir: "data/raw/PPMI/PPMI_Clinical"
+  ppmi_somascan_dir: "data/raw/PPMI/PPMI_SomaScan"
+  ppmi_biomarkers_dir: "data/raw/PPMI/PPMI_Biomarkers"
+  adni_clean_parquet: "data/processed/adni_proteomics_clean.parquet"
+  ppmi_clean_parquet: "data/processed/ppmi_proteomics_clean.parquet"
+  batch_correction_qc: "data/processed/batch_correction_qc"
+
+adni:
+  somascan_version: "v4.1"
+  min_visits_longitudinal: 4
+  visit_gap_min_months: 4
+  visit_gap_max_months: 30
+  converter_group: "MCI_to_Dementia"
+  stable_group: "stable_MCI"
+  stable_followup_min_months: 36
+  clinical_variables:
+    - "CDRSB"
+    - "MMSE"
+    - "ADAS13"
+    - "RAVLT_immediate"
+    - "RAVLT_learning"
+    - "FAQ"
+    - "Ventricles"
+    - "Hippocampus"
+    - "WholeBrain"
+    - "Entorhinal"
+    - "MidTemp"
+
+ppmi:
+  min_visits_longitudinal: 4
+  visit_gap_min_months: 4
+  visit_gap_max_months: 30
+  progression_metric: "NP3TOT"
+  fast_progressor_group: "PD_FAST"
+  slow_progressor_group: "PD_SLOW"
+  intermediate_group: "PD_INTERMEDIATE"
+
+proteomics:
+  min_detectability: 0.80
+  outlier_mahalanobis_sd: 3.0
+  outlier_pca_components: 50
+  normalization: "median"
+  log_transform: true
+  covariates_to_residualize:
+    - "AGE"
+    - "SEX"
+    - "APOE4"
+  imputation_method: "half_min"
+
+csd:
+  window_sizes:
+    - 3
+    - 4
+    - 5
+    - 6
+  primary_window: 4
+  detrending_methods:
+    - "first_difference"
+    - "linear"
+    - "loess"
+    - "none"
+  primary_detrending: "first_difference"
+  n_surrogates: 500
+  alpha: 0.05
+  fdr_method: "BH"
+
+olink:
+  min_qc_pass_fraction: 0.80
+  npx_already_log_transformed: true
+  covariates_to_residualize:
+    - "AGE"
+    - "SEX"
+    - "APOE4"
+
+cross_platform:
+  min_overlap_proteins: 500
+  golden_set_fdr_threshold: 0.05
+  concordance_method: "spearman"
+  platform_comparison_biomarkers:
+    - "GFAP"
+    - "NEFL"
+    - "CLU"
+    - "APOE"
+
+dnb:
+  reference_group: "CN_amyloid_negative"
+  apply_to_platforms:
+    - "somascan"
+    - "olink"
+  variance_top_percentiles:
+    - 10
+    - 20
+    - 30
+  primary_variance_percentile: 10
+  core_protein_threshold: 0.30
+  epsilon: 1.0e-8
+
+validation:
+  bootstrap_n: 1000
+  time_horizons_months:
+    - 12
+    - 24
+    - 36
+  biomarker_negative_threshold_col: "PTAU217"
+  roc_confidence_level: 0.95
+
+visualization:
+  dpi: 300
+  format: "pdf"
+  figsize_single:
+    - 6
+    - 4
+  figsize_double:
+    - 12
+    - 4
+  color_palette:
+    CN_amyloid_negative: "#4DAF4A"
+    CN_amyloid_positive: "#FF7F00"
+    stable_MCI: "#377EB8"
+    MCI_to_Dementia: "#E41A1C"
+    established_AD: "#984EA3"
+    PD_SLOW: "#377EB8"
+    PD_FAST: "#E41A1C"
+    PD_INTERMEDIATE: "#FF7F00"
+
+batch_correction:
+  use_r_combat: false
+  batch_column: "PlateId"
+  protected_columns:
+    - "TRAJECTORY"
+    - "AGE"
