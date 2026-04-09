@@ -158,3 +158,12 @@ batch_correction:
   protected_columns:
     - "TRAJECTORY"
     - "AGE"
+
+wgcna:
+  kme_threshold: 0.60
+  min_module_size: 3
+  core_protein_count: 30
+  soft_power_max: 20
+  min_module_size_wgcna: 30
+  merge_cut_height: 0.25
+  results_dir: "data/results/wgcna"

@@ -272,8 +272,112 @@ def run_dnb_somascan(config: dict) -> None:
     logger.info("DNB SomaScan analysis complete")
 
 
+def run_wgcna(config: dict) -> None:
+    """Stage 3a: WGCNA co-expression module detection (R script).
+
+    Runs WGCNA on the full ADNI proteomics matrix to identify
+    co-expression modules and module membership (kME) scores.
+    Output: data/results/wgcna/wgcna_modules.csv
+    """
+    logger.info("=== Stage 3a: WGCNA Module Detection ===")
+
+    wgcna_script = Path("R/wgcna_module_detection.R")
+    if not wgcna_script.exists():
+        logger.error("WGCNA R script not found at %s", wgcna_script)
+        return
+
+    input_path = Path(config["paths"]["adni_clean_parquet"])
+    if not input_path.exists():
+        raise FileNotFoundError(
+            f"Preprocessed ADNI data not found at {input_path}. "
+            "Run adni_preprocess first."
+        )
+
+    logger.info("Running WGCNA module detection via R...")
+    result = subprocess.run(
+        ["Rscript", str(wgcna_script)],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        logger.error("WGCNA R script failed:\n%s", result.stderr)
+        raise RuntimeError("WGCNA module detection failed")
+
+    # Log R output
+    for line in result.stdout.strip().split("\n"):
+        if line.strip():
+            logger.info("[R] %s", line.strip())
+
+    # Verify output exists
+    wgcna_dir = Path(config["wgcna"]["results_dir"])
+    modules_csv = wgcna_dir / "wgcna_modules.csv"
+    if modules_csv.exists():
+        import pandas as pd
+        wgcna_df = pd.read_csv(modules_csv)
+        n_modules = wgcna_df["module"].nunique()
+        n_proteins = len(wgcna_df)
+        logger.info(
+            "WGCNA complete: %d modules detected across %d proteins",
+            n_modules,
+            n_proteins,
+        )
+    else:
+        logger.warning("WGCNA output not found at %s", modules_csv)
+
+
+def run_dnb_wgcna_somascan(config: dict) -> None:
+    """Stage 3b: WGCNA-guided DNB analysis on ADNI SomaScan data.
+
+    Uses WGCNA co-expression modules to score DNB at the module level,
+    identifies the transition module, and extracts core proteins via
+    dual-filter (variance ratio + kME ranking).
+    """
+    logger.info("=== Stage 3b: WGCNA-guided DNB Analysis — SomaScan ===")
+    import pandas as pd
+
+    from src.dnb.wgcna_dnb import run_wgcna_dnb_analysis
+    from src.preprocessing.somascan_qc import identify_seq_columns, impute_missing_values
+
+    # Check WGCNA modules exist
+    wgcna_dir = Path(config["wgcna"]["results_dir"])
+    if not (wgcna_dir / "wgcna_modules.csv").exists():
+        logger.warning(
+            "WGCNA modules not found at %s — run 'wgcna' stage first. Skipping.",
+            wgcna_dir,
+        )
+        return
+
+    input_path = Path(config["paths"]["adni_clean_parquet"])
+    if not input_path.exists():
+        raise FileNotFoundError(f"Preprocessed ADNI data not found at {input_path}")
+
+    df = pd.read_parquet(input_path)
+    seq_cols = identify_seq_columns(df)
+
+    # Impute for cross-sectional DNB
+    df_imputed = impute_missing_values(
+        df, seq_cols, config["proteomics"]["imputation_method"]
+    )
+
+    # Run WGCNA-guided DNB
+    module_scores, core_proteins, sdnb_scores = run_wgcna_dnb_analysis(
+        df_imputed, seq_cols, config, "somascan"
+    )
+
+    if len(core_proteins) > 0:
+        logger.info(
+            "WGCNA DNB identified %d core proteins (vs. greedy search)",
+            len(core_proteins),
+        )
+    else:
+        logger.warning("WGCNA DNB produced no core proteins")
+
+    logger.info("WGCNA-guided DNB SomaScan analysis complete")
+
+
 def run_netmedpy(config: dict) -> None:
-    """Stage 3b: Interactome proximity analysis via NetMedPy."""
+    """Stage 3c: Interactome proximity analysis via NetMedPy."""
     logger.info("=== Stage 3b: Interactome Proximity Analysis (NetMedPy) ===")
     result = subprocess.run(
         [sys.executable, 'src/network_medicine/interactome_proximity.py'],
@@ -718,13 +822,15 @@ def run_figures(config: dict) -> None:
 
 
 # ---- Stage registry ----
-# Stage order: DNB (primary) → cross-platform → validation → PPMI replication → figures
+# Stage order: DNB (primary) → WGCNA → cross-platform → validation → PPMI replication → figures
 STAGES = OrderedDict(
     [
         ("env_check", (check_environment, None)),
         ("adni_preprocess", (run_adni_preprocessing, "adni_clean_parquet")),
         ("ppmi_preprocess", (run_ppmi_preprocessing, "ppmi_clean_parquet")),
         ("dnb_somascan", (run_dnb_somascan, "results_dnb_somascan")),
+        ("wgcna", (run_wgcna, None)),
+        ("dnb_wgcna_somascan", (run_dnb_wgcna_somascan, None)),
         ("netmedpy", (run_netmedpy, None)),
         ("dnb_olink", (run_dnb_olink, "results_dnb_olink")),
         ("cross_platform", (run_cross_platform, "results_cross_platform")),
