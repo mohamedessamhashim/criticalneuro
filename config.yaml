@@ -116,7 +116,12 @@ batch_correction:
 longitudinal:
   converter_trajectories:        # Which CO->AD trajectories to include
     - "CO->CO->CO->AD"           # n=20, primary group
-    - "CO->CO->CO->CO->AD"       # n=7, included for power
+    - "CO->CO->CO->CO->AD"       # n=7
+    - "CO->CO->CO->AD->AD"       # n=2
+    - "CO->CO->AD->AD"           # n=9
+    - "CO->CO->AD->AD->AD"       # n=3
+  sensitivity_trajectories:      # Included in sensitivity analysis only
+    - "CO->AD->AD->AD"           # n=4, 1 pre-CO visit only
   reference_group: "stable_CO"   # Use non-converters OR earliest converter visits
   stage_definitions:             # Map VisitsToDx to stage labels
     0:  "T0_AD"
@@ -132,7 +137,7 @@ wgcna:
   soft_threshold_range: [1, 20]  # Range to test for soft thresholding
   network_type: "signed"
   min_module_size: 20            # Minimum proteins per module
-                                 # Use 20 for n=27; increase to 30 for larger n
+                                 # Use 20 for n=41; increase to 30 for larger n
   merge_cut_height: 0.25         # Module merging threshold
   cor_method: "bicor"            # Biweight midcorrelation (robust to outliers)
   max_block_size: 5000           # For blockwise computation at 7K proteins
