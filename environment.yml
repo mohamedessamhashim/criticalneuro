@@ -8,7 +8,7 @@ dependencies:
   - r-base=4.4.3
   - r-arrow=16.1.0
   - r-essentials=4.4
-  - bioconductor-wgcna
+  # WGCNA is a CRAN package — install via: Rscript install_dependencies.R
   - bioconductor-sva=3.52.0
   - bioconductor-fgsea=1.30.0
   - bioconductor-biotip

@@ -322,6 +322,70 @@ def save_results(lcc_adni, prox_adni, prox_cross,
     logger.info(f"Saved {out / 'interactome_summary.csv'}")
 
 
+def run_proximity_analysis(cts_proteins: list, cfg: dict, output_dir) -> None:
+    """Run interactome proximity analysis on CTS proteins.
+
+    This is the entry point called by the longitudinal pipeline
+    (pipeline/stage5_network_medicine.py).
+
+    Parameters
+    ----------
+    cts_proteins : list
+        List of CTS protein gene symbols from BioTIP.
+    cfg : dict
+        Pipeline configuration (used for interactome_path if available).
+    output_dir : pathlib.Path or str
+        Directory to write results.
+    """
+    output_dir = pathlib.Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    G = load_interactome()
+    cts_in_interactome = filter_to_interactome(cts_proteins, G, label='CTS')
+
+    if len(cts_in_interactome) < 2:
+        logger.warning(
+            "Only %d CTS proteins found in interactome — need at least 2 for proximity analysis",
+            len(cts_in_interactome),
+        )
+        return
+
+    dist_matrix = get_distance_matrix(G)
+
+    # LCC analysis
+    lcc_result = run_lcc(G, cts_in_interactome, label='CTS')
+
+    # Within-group proximity
+    prox_result = run_within_proximity(G, cts_in_interactome, dist_matrix)
+
+    # Save results
+    lcc_df = pd.DataFrame([lcc_result])
+    lcc_df.to_csv(output_dir / 'lcc_results.csv', index=False)
+
+    prox_df = pd.DataFrame([prox_result])
+    prox_df.to_csv(output_dir / 'proximity_results.csv', index=False)
+
+    summary_df = pd.DataFrame([{
+        'n_cts_proteins': len(cts_proteins),
+        'n_in_interactome': len(cts_in_interactome),
+        'n_interactome_nodes': G.number_of_nodes(),
+        'n_interactome_edges': G.number_of_edges(),
+        'lcc_z_score': lcc_result.get('z_score', None),
+        'lcc_p_value': lcc_result.get('p_val', None),
+        'proximity_z_score': prox_result.get('z_score', None),
+        'proximity_p_value': prox_result.get('p_value', None),
+    }])
+    summary_df.to_csv(output_dir / 'interactome_summary.csv', index=False)
+
+    logger.info(
+        "Network medicine complete: LCC Z=%.3f (p=%.4f), Proximity Z=%.3f (p=%.4f)",
+        lcc_result.get('z_score', float('nan')),
+        lcc_result.get('p_val', float('nan')),
+        prox_result.get('z_score', float('nan')),
+        prox_result.get('p_value', float('nan')),
+    )
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(

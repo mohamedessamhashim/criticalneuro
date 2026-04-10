@@ -141,14 +141,15 @@ def _run_combat_r_impl(
         mod = np.ones((len(df), 1))
 
     # Convert to R objects
+    # Use flatten('F') for Fortran (column-major) order to match R's matrix() filling
     r_matrix = ro.r["matrix"](
-        ro.FloatVector(protein_matrix.flatten()),
+        ro.FloatVector(protein_matrix.flatten('F')),
         nrow=protein_matrix.shape[0],
         ncol=protein_matrix.shape[1],
     )
     r_batch = ro.StrVector(batch.astype(str))
     r_mod = ro.r["matrix"](
-        ro.FloatVector(mod.flatten()), nrow=mod.shape[0], ncol=mod.shape[1]
+        ro.FloatVector(mod.flatten('F')), nrow=mod.shape[0], ncol=mod.shape[1]
     )
 
     # Run ComBat
