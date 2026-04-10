@@ -1,12 +1,13 @@
 """WGCNA-guided Dynamic Network Biomarker (DNB) analysis.
 
-Replaces the greedy search with WGCNA co-expression modules to identify
-biologically grounded transition modules. Each WGCNA module is scored
-using the standard DNB formula, and the top-scoring module's hub proteins
-form the core DNB set.
+Uses WGCNA co-expression modules to identify biologically grounded
+transition modules. Each WGCNA module is scored using the standard
+DNB formula, and the top-scoring module's hub proteins form the core
+DNB set. This is the primary DNB identification method for cross-sectional
+analysis (ADNI/PPMI).
 
-This is an ADDITION to the existing greedy search pipeline, not a
-replacement.  The greedy search in dnb_computation.py remains intact.
+For longitudinal analysis (Knight-ADRC), see the BioTIP + l-DNB pipeline
+in pipeline/stage4_biotip.R and pipeline/stage4_ldnb.R.
 
 References:
     - Chen et al. (2012) — DNB framework
@@ -327,6 +328,7 @@ def run_wgcna_dnb_analysis(
     protein_cols: list[str],
     config: dict,
     platform_label: str,
+    wgcna_results_dir: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run the full WGCNA-guided DNB analysis pipeline.
 
@@ -343,6 +345,8 @@ def run_wgcna_dnb_analysis(
         Full config dict.
     platform_label : str
         'somascan' or 'olink'.
+    wgcna_results_dir: str, optional
+        Path to the WGCNA results directory. Defaults to config['wgcna']['results_dir'].
 
     Returns
     -------
@@ -355,7 +359,7 @@ def run_wgcna_dnb_analysis(
     wgcna_cfg = config["wgcna"]
 
     # Load WGCNA modules
-    wgcna_results_dir = wgcna_cfg["results_dir"]
+    wgcna_results_dir = wgcna_results_dir or wgcna_cfg["results_dir"]
     wgcna_df = load_wgcna_modules(wgcna_results_dir)
 
     # Define masks

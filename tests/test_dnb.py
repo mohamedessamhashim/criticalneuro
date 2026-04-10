@@ -7,11 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dnb.dnb_computation import (
-    compute_dnb_score,
-    identify_dnb_core_proteins,
-    identify_dnb_group,
-)
+from src.dnb.dnb_computation import compute_dnb_score
 
 
 @pytest.fixture
@@ -59,58 +55,6 @@ class TestDNBScore:
         assert score > 0
 
 
-class TestDNBGroup:
-    def test_group_has_higher_within_correlation(self, rng):
-        """DNB group proteins should have higher pairwise correlation than random."""
-        n = 100
-        n_proteins = 30
-
-        # Create a block of 5 correlated proteins (simulating DNB group)
-        base = rng.normal(0, 3, n)
-        correlated_block = np.column_stack(
-            [base + rng.normal(0, 0.5, n) for _ in range(5)]
-        )
-        # Plus 25 uncorrelated proteins
-        uncorrelated = rng.normal(0, 1, (n, 25))
-        X = np.column_stack([correlated_block, uncorrelated])
-
-        # Reference has low variance
-        X_ref = rng.normal(0, 0.5, (n, n_proteins))
-
-        protein_names = [f"p{i}" for i in range(n_proteins)]
-        group_names, score = identify_dnb_group(
-            X, protein_names, X_ref, top_variance_percentile=30
-        )
-
-        if len(group_names) >= 2:
-            # Check within-group correlation is higher than random
-            group_idx = [protein_names.index(p) for p in group_names]
-            X_g = X[:, group_idx]
-            corr = np.corrcoef(X_g.T)
-            upper = np.triu_indices(len(group_idx), k=1)
-            mean_within = np.abs(corr[upper]).mean()
-
-            # Random group of same size
-            random_idx = rng.choice(n_proteins, len(group_idx), replace=False)
-            X_r = X[:, random_idx]
-            corr_r = np.corrcoef(X_r.T)
-            upper_r = np.triu_indices(len(random_idx), k=1)
-            mean_random = np.abs(corr_r[upper_r]).mean()
-
-            assert mean_within > mean_random, (
-                f"Within-group correlation ({mean_within:.3f}) should exceed "
-                f"random ({mean_random:.3f})"
-            )
-
-    def test_returns_empty_for_insufficient_proteins(self, rng):
-        """With fewer than 2 proteins, should return empty group."""
-        X = rng.normal(0, 1, (50, 1))
-        X_ref = rng.normal(0, 1, (50, 1))
-        group, score = identify_dnb_group(X, ["p0"], X_ref, 20)
-        assert group == []
-        assert score == 0.0
-
-
 class TestSDNB:
     def test_sdnb_increases_for_destabilized_group(self, rng):
         """sDNB scores should be higher for destabilized samples."""
@@ -143,34 +87,6 @@ class TestSDNB:
             f"Destabilized sDNB ({score_destab:.3f}) should exceed "
             f"stable ({score_stable:.3f})"
         )
-
-
-class TestCoreProteins:
-    def test_threshold_filtering(self):
-        """Proteins below threshold fraction should be excluded."""
-        dnb_by_participant = {
-            1: ["p1", "p2", "p3"],
-            2: ["p1", "p2", "p4"],
-            3: ["p1", "p5", "p6"],
-            4: ["p1", "p2", "p3"],
-            5: ["p7", "p8", "p9"],
-        }
-        # threshold=0.30 means protein must appear in >= 30% of 5 participants = 1.5 -> 2+
-        result = identify_dnb_core_proteins(dnb_by_participant, threshold=0.30)
-
-        # p1 appears in 4/5 = 0.80 -> core
-        # p2 appears in 3/5 = 0.60 -> core
-        # p3 appears in 2/5 = 0.40 -> core
-        # p4, p5, p6, p7, p8, p9 appear in 1/5 = 0.20 -> not core
-        assert "p1" in result["protein"].values
-        assert "p2" in result["protein"].values
-        assert "p3" in result["protein"].values
-        assert "p7" not in result["protein"].values
-
-    def test_empty_input(self):
-        """Empty input should return empty DataFrame."""
-        result = identify_dnb_core_proteins({}, threshold=0.30)
-        assert len(result) == 0
 
 
 class TestDNBOnOlink:

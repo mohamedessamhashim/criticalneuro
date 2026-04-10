@@ -1,23 +1,27 @@
-"""Full pipeline orchestrator for CriticalNeuroMap.
+"""Full pipeline orchestrator for CriticalNeuroMap (cross-sectional mode).
 
 Runs all preprocessing and analysis steps in sequence with checkpointing.
 Each stage checks for existing output and skips if already completed.
 
-Stage order (DNB is primary, CSD is secondary):
-  0 - env_check           Environment verification
+Stage order:
+  0 - env_check            Environment verification
   1 - adni_preprocess      ADNI SomaScan preprocessing
   2 - ppmi_preprocess      PPMI SomaScan preprocessing
-  3 - dnb_somascan         DNB analysis on SomaScan (PRIMARY, Stage 1 discovery)
-  4 - dnb_olink            DNB analysis on Olink (PRIMARY, Stage 2 replication)
-  5 - cross_platform       Cross-platform Golden Set validation
-  6 - csd                  CSD rolling-window analysis (SECONDARY)
-  7 - validation           Biomarker comparison and ROC analysis
-  8 - ppmi_replication     Replicate on PPMI data
-  9 - figures              Generate all publication figures
+  3 - wgcna                WGCNA module detection (R)
+  4 - dnb_wgcna_somascan   WGCNA-guided DNB analysis
+  5 - netmedpy             Interactome proximity (NetMedPy)
+  6 - cross_platform       Cross-platform Golden Set validation
+  7 - csd                  CSD rolling-window analysis
+  8 - validation           Biomarker comparison and ROC analysis
+  9 - wgcna_ppmi           WGCNA PPMI replication
+ 10 - ppmi_replication     Replicate on PPMI data
+ 11 - figures              Generate all publication figures
+
+For longitudinal Knight-ADRC analysis, use run_pipeline.py instead.
 
 Usage:
     python pipelines/run_full_pipeline.py                        # run all stages
-    python pipelines/run_full_pipeline.py --stage dnb_somascan   # run single stage
+    python pipelines/run_full_pipeline.py --stage wgcna          # run single stage
     python pipelines/run_full_pipeline.py --force                # force rerun all
 """
 
@@ -189,89 +193,6 @@ def run_ppmi_preprocessing(config: dict) -> None:
     logger.info("PPMI preprocessed data saved to %s", output_path)
 
 
-def run_dnb_somascan(config: dict) -> None:
-    """Stage 3: DNB analysis on ADNI SomaScan data (PRIMARY, Stage 1 discovery)."""
-    logger.info("=== Stage 3: DNB Analysis — SomaScan (PRIMARY) ===")
-    import pandas as pd
-
-    from src.dnb.dnb_computation import run_dnb_on_platform
-    from src.dnb.sdnb import run_sdnb_analysis
-    from src.preprocessing.somascan_qc import identify_seq_columns, impute_missing_values
-
-    input_path = Path(config["paths"]["adni_clean_parquet"])
-    if not input_path.exists():
-        raise FileNotFoundError(f"Preprocessed ADNI data not found at {input_path}")
-
-    df = pd.read_parquet(input_path)
-    seq_cols = identify_seq_columns(df)
-
-    # Impute for cross-sectional DNB (Rule 10: only for DNB, not CSD)
-    df_imputed = impute_missing_values(df, seq_cols, config["proteomics"]["imputation_method"])
-
-    # Run DNB on SomaScan at multiple variance percentiles
-    base_results_dir = Path(config["paths"]["results_dnb_somascan"])
-    variance_percentiles = [5, 10, 20]
-
-    for pct in variance_percentiles:
-        logger.info("--- ADNI SomaScan DNB at variance percentile %d%% ---", pct)
-        pct_config = config.copy()
-        pct_config["dnb"] = config["dnb"].copy()
-        pct_config["dnb"]["primary_variance_percentile"] = pct
-        pct_config["paths"] = config["paths"].copy()
-
-        var_dir = base_results_dir / f"variance_{pct:02d}"
-        pct_config["paths"]["results_dnb_somascan"] = str(var_dir)
-
-        stage_scores, core_proteins, dnb_by_participant, core_per_participant = run_dnb_on_platform(
-            df_imputed, seq_cols, pct_config, "somascan"
-        )
-
-        # Save per-participant data
-        var_dir.mkdir(parents=True, exist_ok=True)
-        core_per_participant.to_csv(var_dir / "dnb_core_proteins_per_participant.csv", index=False)
-        rows = []
-        for rid, proteins in dnb_by_participant.items():
-            for protein in proteins:
-                rows.append({"RID": rid, "protein": protein})
-        if rows:
-            pd.DataFrame(rows).to_csv(var_dir / "dnb_by_participant.csv", index=False)
-
-        # Primary percentile (10%): run sDNB, GSEA, save to main + legacy dirs
-        if pct == 10:
-            reference_mask = df_imputed["TRAJECTORY"] == config["dnb"]["reference_group"]
-            core_protein_list = core_proteins["protein"].tolist() if len(core_proteins) > 0 else None
-            sdnb_scores = run_sdnb_analysis(
-                df_imputed, seq_cols, reference_mask, config,
-                core_protein_cols=core_protein_list,
-            )
-
-            base_results_dir.mkdir(parents=True, exist_ok=True)
-            stage_scores.to_csv(base_results_dir / "dnb_scores_by_stage.csv", index=False)
-            core_proteins.to_csv(base_results_dir / "dnb_core_proteins.csv", index=False)
-            sdnb_scores.to_csv(base_results_dir / "sdnb_scores.csv", index=False)
-
-            legacy_dir = Path(config["paths"]["results_dnb"])
-            legacy_dir.mkdir(parents=True, exist_ok=True)
-            stage_scores.to_csv(legacy_dir / "dnb_scores_by_stage.csv", index=False)
-            core_proteins.to_csv(legacy_dir / "dnb_core_proteins.csv", index=False)
-            sdnb_scores.to_csv(legacy_dir / "sdnb_scores.csv", index=False)
-
-            if len(core_proteins) > 0:
-                gsea_script = Path("R/gsea_analysis.R")
-                if gsea_script.exists():
-                    logger.info("Running GSEA via R...")
-                    result = subprocess.run(
-                        ["Rscript", str(gsea_script)],
-                        capture_output=True, text=True,
-                    )
-                    if result.returncode != 0:
-                        logger.warning("R GSEA script failed: %s", result.stderr)
-                    else:
-                        logger.info("GSEA complete")
-
-    logger.info("DNB SomaScan analysis complete")
-
-
 def run_wgcna(config: dict) -> None:
     """Stage 3a: WGCNA co-expression module detection (R script).
 
@@ -367,13 +288,48 @@ def run_dnb_wgcna_somascan(config: dict) -> None:
 
     if len(core_proteins) > 0:
         logger.info(
-            "WGCNA DNB identified %d core proteins (vs. greedy search)",
+            "WGCNA DNB identified %d core proteins",
             len(core_proteins),
         )
     else:
         logger.warning("WGCNA DNB produced no core proteins")
 
     logger.info("WGCNA-guided DNB SomaScan analysis complete")
+
+
+def run_wgcna_ppmi(config: dict) -> None:
+    """Stage 8b: WGCNA co-expression module detection for PPMI (R script)."""
+    logger.info("=== Stage 8b: WGCNA Module Detection (PPMI) ===")
+
+    wgcna_script = Path("R/wgcna_module_detection.R")
+    if not wgcna_script.exists():
+        logger.error("WGCNA R script not found at %s", wgcna_script)
+        return
+
+    input_path = Path(config["paths"]["ppmi_clean_parquet"])
+    if not input_path.exists():
+        logger.warning("PPMI preprocessed data not found, skipping WGCNA PPMI")
+        return
+
+    out_dir = Path("data/results/ppmi/wgcna")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Running WGCNA module detection via R for PPMI...")
+    result = subprocess.run(
+        ["Rscript", str(wgcna_script), str(input_path), str(out_dir)],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        logger.error("WGCNA PPMI R script failed:\n%s", result.stderr)
+        raise RuntimeError("WGCNA PPMI module detection failed")
+
+    for line in result.stdout.strip().split("\n"):
+        if line.strip():
+            logger.info("[R] %s", line.strip())
+
+    logger.info("WGCNA PPMI stage complete")
 
 
 def run_netmedpy(config: dict) -> None:
@@ -386,75 +342,6 @@ def run_netmedpy(config: dict) -> None:
     if result.returncode != 0:
         logger.warning("Stage 3b (NetMedPy) failed — continuing pipeline. "
                        "Ensure data/reference/interactome_ppi.pkl exists (see README for download instructions).")
-
-
-def run_dnb_olink(config: dict) -> None:
-    """Stage 4: DNB analysis on ADNI Olink data (PRIMARY, Stage 2 replication).
-
-    Skips gracefully if no Olink data is available.
-    """
-    logger.info("=== Stage 4: DNB Analysis — Olink (PRIMARY) ===")
-    import pandas as pd
-
-    olink_path = Path(config["paths"]["adni_olink_clean_parquet"])
-    if not olink_path.exists():
-        logger.warning(
-            "No Olink preprocessed data at %s — skipping DNB Olink stage. "
-            "Cross-platform validation will also be skipped.",
-            olink_path,
-        )
-        return
-
-    from src.dnb.dnb_computation import run_dnb_on_platform
-    from src.preprocessing.somascan_qc import impute_missing_values
-
-    df = pd.read_parquet(olink_path)
-
-    # Identify Olink protein columns (NPX_* prefix)
-    npx_cols = [c for c in df.columns if c.startswith("NPX_")]
-    if not npx_cols:
-        logger.error("No NPX_* columns found in Olink data — aborting Olink DNB")
-        return
-
-    logger.info("Olink data loaded: %d samples, %d proteins", len(df), len(npx_cols))
-
-    # Olink NPX is already log2-transformed — impute but do NOT re-log
-    df_imputed = impute_missing_values(df, npx_cols, config["proteomics"]["imputation_method"])
-
-    # Run DNB on Olink at multiple variance percentiles
-    base_results_dir = Path(config["paths"].get("results_dnb_olink", "data/results/dnb/olink"))
-    variance_percentiles = [5, 10, 20]
-
-    for pct in variance_percentiles:
-        logger.info("--- ADNI Olink DNB at variance percentile %d%% ---", pct)
-        pct_config = config.copy()
-        pct_config["dnb"] = config["dnb"].copy()
-        pct_config["dnb"]["primary_variance_percentile"] = pct
-        pct_config["paths"] = config["paths"].copy()
-
-        var_dir = base_results_dir / f"variance_{pct:02d}"
-        pct_config["paths"]["results_dnb_olink"] = str(var_dir)
-
-        stage_scores, core_proteins, dnb_by_participant, core_per_participant = run_dnb_on_platform(
-            df_imputed, npx_cols, pct_config, "olink"
-        )
-
-        var_dir.mkdir(parents=True, exist_ok=True)
-        core_per_participant.to_csv(var_dir / "dnb_core_proteins_per_participant.csv", index=False)
-        rows = []
-        for rid, proteins in dnb_by_participant.items():
-            for protein in proteins:
-                rows.append({"RID": rid, "protein": protein})
-        if rows:
-            pd.DataFrame(rows).to_csv(var_dir / "dnb_by_participant.csv", index=False)
-
-        # Primary percentile (10%): save to main dir
-        if pct == 10:
-            base_results_dir.mkdir(parents=True, exist_ok=True)
-            stage_scores.to_csv(base_results_dir / "dnb_scores_by_stage.csv", index=False)
-            core_proteins.to_csv(base_results_dir / "dnb_core_proteins.csv", index=False)
-
-    logger.info("DNB Olink analysis complete")
 
 
 def run_cross_platform(config: dict) -> None:
@@ -733,11 +620,11 @@ def run_validation(config: dict) -> None:
 
 
 def run_ppmi_replication(config: dict) -> None:
-    """Stage 8: Replicate DNB and CSD analyses on PPMI data."""
+    """Stage 8: Replicate WGCNA DNB analysis on PPMI data."""
     logger.info("=== Stage 8: PPMI Replication ===")
     import pandas as pd
 
-    from src.dnb.dnb_computation import run_dnb_on_platform
+    from src.dnb.wgcna_dnb import run_wgcna_dnb_analysis
     from src.preprocessing.somascan_qc import identify_seq_columns, impute_missing_values
 
     input_path = Path(config["paths"]["ppmi_clean_parquet"])
@@ -750,7 +637,6 @@ def run_ppmi_replication(config: dict) -> None:
     results_dir = Path(config["paths"]["results_ppmi"])
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # DNB analysis first (primary) — use PPMI progression labels
     df_imputed = impute_missing_values(df, seq_cols, config["proteomics"]["imputation_method"])
 
     # Override reference group for PPMI context
@@ -759,55 +645,20 @@ def run_ppmi_replication(config: dict) -> None:
     ppmi_dnb_config["dnb"]["reference_group"] = config["ppmi"]["slow_progressor_group"]
     ppmi_dnb_config["adni"] = config["ppmi"].copy()
     ppmi_dnb_config["adni"]["converter_group"] = config["ppmi"]["fast_progressor_group"]
-    # Redirect run_dnb_on_platform output to PPMI-specific directory so it never
-    # overwrites the ADNI SomaScan results in data/results/dnb/somascan/
     ppmi_dnb_config["paths"] = config["paths"].copy()
     ppmi_dnb_config["paths"]["results_dnb_somascan"] = str(
         Path(config["paths"]["results_ppmi"]) / "somascan"
     )
 
-    reference_mask = df_imputed["TRAJECTORY"] == config["ppmi"]["slow_progressor_group"]
-    if reference_mask.sum() <= 5:
-        logger.warning("Fewer than 5 reference samples — skipping PPMI DNB")
-        return
-
-    # Run at multiple variance percentiles for sensitivity analysis
-    variance_percentiles = [5, 10, 20]
-    for pct in variance_percentiles:
-        logger.info("--- PPMI DNB at variance percentile %d%% ---", pct)
-        pct_config = ppmi_dnb_config.copy()
-        pct_config["dnb"] = ppmi_dnb_config["dnb"].copy()
-        pct_config["dnb"]["primary_variance_percentile"] = pct
-
-        var_dir = results_dir / f"variance_{pct:02d}"
-        var_dir.mkdir(parents=True, exist_ok=True)
-        pct_config["paths"] = ppmi_dnb_config["paths"].copy()
-        pct_config["paths"]["results_dnb_somascan"] = str(var_dir)
-
-        stage_scores, core_proteins, dnb_by_participant, core_per_participant = run_dnb_on_platform(
-            df_imputed, seq_cols, pct_config, "somascan"
+    # WGCNA DNB analysis for PPMI
+    ppmi_wgcna_dir = "data/results/ppmi/wgcna"
+    if Path(ppmi_wgcna_dir).exists():
+        logger.info("--- PPMI DNB via WGCNA ---")
+        run_wgcna_dnb_analysis(
+            df_imputed, seq_cols, ppmi_dnb_config, "somascan_ppmi", wgcna_results_dir=ppmi_wgcna_dir
         )
-
-        stage_scores.to_csv(var_dir / "ppmi_dnb_scores_by_stage.csv", index=False)
-        core_proteins.to_csv(var_dir / "ppmi_dnb_core_proteins.csv", index=False)
-        core_per_participant.to_csv(
-            var_dir / "ppmi_dnb_core_proteins_per_participant.csv", index=False
-        )
-
-        # Save raw per-participant DNB groups (one row per participant-protein)
-        rows = []
-        for rid, proteins in dnb_by_participant.items():
-            for protein in proteins:
-                rows.append({"RID": rid, "protein": protein})
-        if rows:
-            pd.DataFrame(rows).to_csv(
-                var_dir / "ppmi_dnb_by_participant.csv", index=False
-            )
-
-        # Copy primary percentile (10%) to the main results directory
-        if pct == 10:
-            stage_scores.to_csv(results_dir / "ppmi_dnb_scores_by_stage.csv", index=False)
-            core_proteins.to_csv(results_dir / "ppmi_dnb_core_proteins.csv", index=False)
+    else:
+        logger.warning("PPMI WGCNA modules not found at %s — run wgcna_ppmi stage first", ppmi_wgcna_dir)
 
     logger.info("PPMI replication complete")
 
@@ -822,19 +673,19 @@ def run_figures(config: dict) -> None:
 
 
 # ---- Stage registry ----
-# Stage order: DNB (primary) → WGCNA → cross-platform → validation → PPMI replication → figures
+# Stage order: preprocess → WGCNA → WGCNA DNB → NetMedPy → cross-platform → CSD → validation → PPMI → figures
 STAGES = OrderedDict(
     [
         ("env_check", (check_environment, None)),
         ("adni_preprocess", (run_adni_preprocessing, "adni_clean_parquet")),
         ("ppmi_preprocess", (run_ppmi_preprocessing, "ppmi_clean_parquet")),
-        ("dnb_somascan", (run_dnb_somascan, "results_dnb_somascan")),
         ("wgcna", (run_wgcna, None)),
         ("dnb_wgcna_somascan", (run_dnb_wgcna_somascan, None)),
         ("netmedpy", (run_netmedpy, None)),
-        ("dnb_olink", (run_dnb_olink, "results_dnb_olink")),
         ("cross_platform", (run_cross_platform, "results_cross_platform")),
+        ("csd", (run_csd_analysis, "results_csd")),
         ("validation", (run_validation, "results_validation")),
+        ("wgcna_ppmi", (run_wgcna_ppmi, None)),
         ("ppmi_replication", (run_ppmi_replication, "results_ppmi")),
         ("figures", (run_figures, "results_figures")),
     ]

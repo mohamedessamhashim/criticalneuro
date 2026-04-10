@@ -30,15 +30,23 @@ soft_power_max   <- wgcna_cfg$soft_power_max       # 20
 min_mod_size     <- wgcna_cfg$min_module_size_wgcna # 30
 merge_cut_height <- wgcna_cfg$merge_cut_height      # 0.25
 
-# ---- Load processed ADNI proteomics data ----
+# ---- Command line arguments ----
+args <- commandArgs(trailingOnly = TRUE)
+
 input_path <- config$paths$adni_clean_parquet
+output_dir <- wgcna_cfg$results_dir
+
+if (length(args) >= 2) {
+  input_path <- args[1]
+  output_dir <- args[2]
+}
+
 if (!file.exists(input_path)) {
-  stop(sprintf("Processed ADNI data not found at %s. Run preprocessing first.", input_path))
+  stop(sprintf("Processed data not found at %s. Run preprocessing first.", input_path))
 }
 
 df <- arrow::read_parquet(input_path)
-message(sprintf("Loaded ADNI data: %d samples, %d columns", nrow(df), ncol(df)))
-
+message(sprintf("Loaded data: %d samples, %d columns", nrow(df), ncol(df)))
 # ---- Identify protein columns ----
 seq_cols <- grep("^seq\\.", colnames(df), value = TRUE)
 message(sprintf("Found %d protein columns (seq.*)", length(seq_cols)))
@@ -98,7 +106,6 @@ sft <- pickSoftThreshold(expr_matrix,
 
 # Save scale-free topology fit table
 sft_df <- sft$fitIndices
-output_dir <- wgcna_cfg$results_dir
 if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 write.csv(sft_df, file.path(output_dir, "soft_threshold_fit.csv"), row.names = FALSE)
 
@@ -194,21 +201,22 @@ for (mod in unique(module_colors)) {
 summary_df <- do.call(rbind, summary_rows)
 summary_df <- summary_df[order(-summary_df$n_proteins), ]
 
-# Add metadata row
-meta_row <- data.frame(
-  module = "META",
-  n_proteins = ncol(expr_matrix),
-  mean_kME = soft_power,
-  median_kME = n_modules,
-  min_kME = nrow(expr_matrix),
-  max_kME = merge_cut_height,
-  stringsAsFactors = FALSE
-)
-summary_df <- rbind(meta_row, summary_df)
-
 summary_path <- file.path(output_dir, "wgcna_summary.csv")
 write.csv(summary_df, summary_path, row.names = FALSE)
 message(sprintf("Summary written: %s", summary_path))
+
+# Write run parameters to separate file
+run_params <- data.frame(
+  soft_power = soft_power,
+  n_modules = n_modules,
+  n_samples = nrow(expr_matrix),
+  n_proteins = ncol(expr_matrix),
+  merge_cut_height = merge_cut_height,
+  stringsAsFactors = FALSE
+)
+params_path <- file.path(output_dir, "wgcna_run_params.csv")
+write.csv(run_params, params_path, row.names = FALSE)
+message(sprintf("Run parameters written: %s", params_path))
 
 message(sprintf("=== WGCNA complete: %d modules from %d proteins ===",
                 n_modules, ncol(expr_matrix)))

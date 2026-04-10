@@ -30,29 +30,26 @@ STAGE_COLORS = {
     'PD_SLOW':         PALETTE['pd_slow'],
 }
 
-HARDCODED = [
-    {'stage': 'PD_INTERMEDIATE', 'dnb_score': 0.565, 'n_samples': 514},
-    {'stage': 'PD_FAST',         'dnb_score': 0.535, 'n_samples': 402},
-    {'stage': 'PD_SLOW',         'dnb_score': 0.282, 'n_samples': 314},
-]
-
-
 def load_data():
-    csv_path = Path('data/results/ppmi/ppmi_dnb_scores_by_stage.csv')
+    csv_path = Path('data/results/dnb/somascan_ppmi/wgcna/sdnb_scores_wgcna.csv')
     if not csv_path.exists():
-        print(f'WARNING: {csv_path} not found — using hardcoded verified values from paper')
-        return pd.DataFrame(HARDCODED), True
+        print(f'WARNING: {csv_path} not found — cannot build figure')
+        return pd.DataFrame(), True
 
     df = pd.read_csv(csv_path)
-    required = {'stage', 'dnb_score', 'n_samples'}
+    required = {'TRAJECTORY', 'sdnb_score'}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f'Missing columns {missing} in {csv_path}')
 
-    df = df[df['stage'] != 'other'].copy()
-    df = df[df['stage'].isin(STAGE_LABELS)].copy()
-    print(f'Loaded {len(df)} PPMI stage rows from {csv_path}')
-    return df, False
+    grouped = df.groupby('TRAJECTORY')
+    stage_df = grouped['sdnb_score'].agg(['mean', 'count']).reset_index()
+    stage_df.rename(columns={'TRAJECTORY': 'stage', 'mean': 'dnb_score', 'count': 'n_samples'}, inplace=True)
+
+    stage_df = stage_df[stage_df['stage'] != 'other'].copy()
+    stage_df = stage_df[stage_df['stage'].isin(STAGE_LABELS)].copy()
+    print(f'Loaded WGCNA patient scores corresponding to {len(stage_df)} PPMI stage rows from {csv_path}')
+    return stage_df, False
 
 
 def make_panel_a(ax, df, used_fallback=False):
@@ -64,8 +61,13 @@ def make_panel_a(ax, df, used_fallback=False):
 
     ax.barh(y_pos, df['dnb_score'], height=0.6, color=colors)
 
-    ax.set_xlim(0, 0.75)
-    ax.set_xlabel('DNB Score', fontsize=8)
+    score_min = df['dnb_score'].min()
+    score_max = df['dnb_score'].max()
+    x_start = max(0, score_min - 0.1)
+    x_end = score_max * 1.5
+
+    ax.set_xlim(x_start, x_end)
+    ax.set_xlabel('Patient sDNB Score (WGCNA)', fontsize=8)
     ax.xaxis.grid(True, linestyle='--', linewidth=0.5, alpha=0.5, color='#cccccc')
     ax.set_axisbelow(True)
 
@@ -75,47 +77,44 @@ def make_panel_a(ax, df, used_fallback=False):
     ax.tick_params(axis='y', length=0)
 
     # Score + n annotations
+    ref_row = df[df['stage'] == 'PD_SLOW']
+    ref_score = ref_row['dnb_score'].values[0] if not ref_row.empty else score_min
+
     for i, (_, row) in enumerate(df.iterrows()):
         score = row['dnb_score']
         n = int(row['n_samples'])
         is_peak = row['stage'] == 'PD_INTERMEDIATE'
         fw = 'bold' if is_peak else 'normal'
-        ax.text(score + 0.01, i, f'{score:.3f}', va='center', ha='left',
+
+        ax.text(score + (x_end - score_max)*0.02, i, f'{score:.3f}', va='center', ha='left',
                 fontsize=FONT_SIZE, fontweight=fw)
-        ax.text(score + 0.10, i, f'(n = {n})', va='center', ha='left',
+        ax.text(score + (x_end - score_max)*0.4, i, f'(n = {n})', va='center', ha='left',
                 fontsize=6, color='#888888')
 
-    # Reference line at PD_SLOW (0.282) — label anchored to right side of axes
-    ref_score = 0.282
+    # Reference line at PD_SLOW
     ax.axvline(x=ref_score, color='#888888', linestyle='--', linewidth=0.8)
-    ax.text(0.98, 0.97, 'PD Slow\nreference',
-            fontsize=6, color='#666666', style='italic', va='top',
-            ha='right', transform=ax.transAxes)
+    ax.text(ref_score + (x_end - x_start)*0.01, 2.55, 'PD Slow\nref.',
+            fontsize=6, color='#888888', style='italic', va='top', ha='left')
 
-    # Inverted-U annotation box — anchored to top-right of panel, arrow to PD Intermediate
-    inter_idx = df['stage'].tolist().index('PD_INTERMEDIATE')
-    ax.annotate(
-        'Tipping-point theory:\npeak at pre-transition\n(intermediate) stage',
-        xy=(0.565, inter_idx), xycoords='data',
-        xytext=(0.97, 0.75), textcoords='axes fraction',
-        fontsize=6, color='#444444', ha='right', va='top',
-        arrowprops=dict(arrowstyle='->', color='#444444',
-                        connectionstyle='arc3,rad=-0.2', lw=0.8),
-        bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                  edgecolor='#cccccc', alpha=0.85)
-    )
+    # Inverted-U annotation box
+    if 'PD_INTERMEDIATE' in df['stage'].values:
+        inter_idx = df['stage'].tolist().index('PD_INTERMEDIATE')
+        ax.annotate(
+            'Tipping-point theory:\npeak at pre-transition\n(intermediate) stage',
+            xy=(df[df['stage'] == 'PD_INTERMEDIATE']['dnb_score'].values[0], inter_idx), xycoords='data',
+            xytext=(0.95, 0.75), textcoords='axes fraction',
+            fontsize=6, color='#444444', ha='right', va='top',
+            arrowprops=dict(arrowstyle='->', color='#444444',
+                            connectionstyle='arc3,rad=-0.2', lw=0.8),
+            bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
+                      edgecolor='#cccccc', alpha=0.85)
+        )
 
     ax.set_title('PPMI DNB Score by PD Progression Group', fontsize=8)
     ax.text(0.5, -0.20,
             '\u2021 Other/unclassified (n = 20) excluded; see supplementary',
             transform=ax.transAxes, fontsize=6, ha='center', color='#666666')
     add_panel_label(ax, 'A')
-
-    if used_fallback:
-        ax.text(0.5, 0.02,
-                'Note: generated from hardcoded values — rerun pipeline to use computed data',
-                transform=ax.transAxes, fontsize=5, color='#999999',
-                ha='center', style='italic')
 
 
 def make_panel_b(ax):

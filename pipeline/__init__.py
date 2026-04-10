@@ -1,0 +1,1 @@
+"""CriticalNeuroMap pipeline stages."""

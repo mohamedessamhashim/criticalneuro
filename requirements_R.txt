@@ -1,0 +1,18 @@
+# R package dependencies for CriticalNeuroMap
+# Install via: Rscript install_dependencies.R
+
+# CRAN packages
+WGCNA
+lme4
+lmerTest
+ggplot2
+dplyr
+tidyr
+yaml
+optparse
+BiocManager
+
+# Bioconductor packages (installed via BiocManager)
+BioTIP
+limma
+sva

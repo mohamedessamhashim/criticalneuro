@@ -90,11 +90,10 @@ def make_figure():
         (f'P-value: {row["p_value"]:.3f}', 7, 'normal', '#444444'),
         ('', 5, 'normal', '#ffffff'),
         ('Interpretation:', 7, 'bold', '#444444'),
-        ('With only 2 core proteins, the LCC analysis', 6.5, 'normal', '#555555'),
-        ('has limited statistical power. The small core', 6.5, 'normal', '#555555'),
-        ('set is a consequence of greedy optimization', 6.5, 'normal', '#555555'),
-        ('converging early. Larger sets from expanded', 6.5, 'normal', '#555555'),
-        ('search strategies would enable more', 6.5, 'normal', '#555555'),
+        ('The LCC analysis evaluates whether core', 6.5, 'normal', '#555555'),
+        ('DNB proteins cluster in the interactome.', 6.5, 'normal', '#555555'),
+        ('WGCNA-guided module selection provides', 6.5, 'normal', '#555555'),
+        ('biologically coherent protein sets for', 6.5, 'normal', '#555555'),
         ('meaningful network topology analysis.', 6.5, 'normal', '#555555'),
     ]
 

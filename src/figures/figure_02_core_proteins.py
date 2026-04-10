@@ -115,12 +115,12 @@ def make_panel_b(ax):
                            linewidth=1.0, zorder=1)
     ax.add_patch(card)
 
-    ax.text(5.0, 9.0, 'Greedy Optimization Convergence',
+    ax.text(5.0, 9.0, 'WGCNA Module DNB Convergence',
             fontsize=9, ha='center', va='top', fontweight='bold',
             color='#333333', zorder=2)
 
     explanation_lines = [
-        ('The greedy DNB optimization converged on a', 7, 'normal', '#444444'),
+        ('The WGCNA-guided DNB analysis identified a', 7, 'normal', '#444444'),
         ('set of just 2 proteins that maximize:', 7, 'normal', '#444444'),
         ('', 6, 'normal', '#ffffff'),
         (r'DNB = ($\sigma_D$ × PCC$_D$) / |PCC$_O$|', 8, 'bold', '#333333'),

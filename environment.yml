@@ -11,6 +11,15 @@ dependencies:
   - bioconductor-wgcna
   - bioconductor-sva=3.52.0
   - bioconductor-fgsea=1.30.0
+  - bioconductor-biotip
+  - bioconductor-limma
+  - r-lme4
+  - r-lmertest
+  - r-optparse
+  - r-ggplot2
+  - r-dplyr
+  - r-tidyr
+  - r-yaml
   - pip
   - pip:
-    - -r requirements.txt
+    - -r requirements_python.txt

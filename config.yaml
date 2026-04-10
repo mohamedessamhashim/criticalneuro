@@ -1,0 +1,177 @@
+# ============================================================
+# CriticalNeuroMap Configuration
+# ============================================================
+
+# --- Analysis Mode ---
+analysis_mode: "longitudinal"   # Options: "cross_sectional" | "longitudinal"
+                                # cross_sectional: ADNI/PPMI original analysis
+                                # longitudinal: Knight-ADRC CO->AD converters
+
+# --- Cohort ---
+cohort: "knight_adrc"           # Options: "adni" | "ppmi" | "knight_adrc"
+
+# --- Data Provenance ---
+# Question: "Has the Cruchaga Lab QC pipeline already been applied to this data?"
+#
+# If TRUE:  Data arrives post-ANML-normalization, post-Cruchaga-QC.
+#           Pipeline skips Stage 1 (QC) and Stage 2 (normalization entirely).
+#           Pipeline starts at Stage 3 (covariate residualization).
+#           Only apply log2 transform if values are still in raw RFU space.
+#
+# If FALSE: Data is raw SomaScan output. Full QC and normalization runs.
+
+data_provenance:
+  cruchaga_qc_already_applied: true   # DEFAULT true for Knight-ADRC
+                                       # Set false for raw SomaScan ADAT files
+
+  cruchaga_normalization_applied: true # ANML + plate calibration done by SomaLogic
+                                        # before Cruchaga Lab received the data
+
+  log2_already_applied: false          # Is the expression matrix already log2?
+                                        # Cruchaga Lab typically delivers untransformed
+                                        # RFU values even after QC. Set true if
+                                        # values are already log-transformed.
+
+  combat_already_applied: false        # Has ComBat already been run?
+                                        # Cruchaga Lab does NOT routinely apply ComBat.
+                                        # They use randomized plate assignment instead.
+                                        # If false, pipeline applies ComBat on Plate var.
+
+# --- Input Paths ---
+# Muhammad: set these paths to your Knight-ADRC data files
+input:
+  expression_matrix: "data/knight_adrc_plasma_expression.csv"
+    # Rows = samples, Columns = aptamers (SeqId format e.g. seq.1234.56)
+    # Values should be post-SomaLogic-normalization RFU values
+    # Do NOT pre-log-transform — the pipeline does this
+
+  metadata: "data/knight_adrc_metadata.csv"
+    # Required columns:
+    #   SampleID       - matches row names of expression matrix
+    #   SubjectID      - participant identifier (repeated across visits)
+    #   Age            - age at blood draw (numeric)
+    #   Sex            - "M" or "F"
+    #   APOE4          - number of APOE e4 alleles (0, 1, or 2)
+    #   Plate          - SomaScan plate/subarray identifier
+    #   Diagnosis      - "CO" or "AD" at each visit
+    #   VisitDate      - date of blood draw (YYYY-MM-DD)
+    #   VisitNumber    - integer (1 = first visit, 2 = second, etc.)
+    #   Converter      - TRUE/FALSE: did this subject convert CO->AD?
+    #   VisitsToDx     - integer: visits remaining until AD diagnosis
+    #                    (0 = the AD visit, 1 = last CO visit before AD, etc.)
+    #                    Set to NA for non-converters
+
+  # For cross_sectional mode only (ADNI/PPMI):
+  adni_expression: "data/adni_somascan_expression.csv"
+  adni_metadata: "data/adni_metadata.csv"
+  ppmi_expression: "data/ppmi_somascan_expression.csv"
+  ppmi_metadata: "data/ppmi_metadata.csv"
+
+# --- Output ---
+output:
+  dir: "results/"
+  save_intermediates: true       # Save checkpoints after each stage
+  figures_dir: "results/figures/"
+  tables_dir: "results/tables/"
+
+# --- QC Parameters ---
+qc:
+  detectability_threshold: 0.80  # Remove proteins detected in <80% of samples
+  outlier_sd_threshold: 3.0      # Remove samples >3 SD on Mahalanobis distance
+  outlier_pca_components: 50     # PCs used for Mahalanobis calculation
+  # Cruchaga Lab QC (applied when data is NOT pre-QC'd from their pipeline)
+  cruchaga_qc: true
+  max_cal_sf_deviation: 0.5      # Remove aptamers: max|cal_SF - median_SF| >= 0.5
+  max_cv: 0.15                   # Remove aptamers: median cross-plate CV > 0.15
+  iqr_outlier_fraction: 0.85     # Remove aptamers: >85% values outside 1.5xIQR
+
+# --- Normalization ---
+normalization:
+  log2_transform: true
+  median_normalization: true     # Sample-level median normalization
+
+# --- Covariate Residualization ---
+residualization:
+  covariates_cross_sectional:    # For ADNI/PPMI
+    - "Age"
+    - "Sex"
+    - "APOE4"                    # ADNI only; omit for PPMI if unavailable
+  covariates_longitudinal:       # For Knight-ADRC longitudinal
+    - "Age"
+    - "Sex"
+    - "APOE4"
+    - "Plate"
+  longitudinal_random_effect: "SubjectID"  # Random intercept per subject
+  # Note: uses lme4 for longitudinal, limma::removeBatchEffect for cross-sectional
+
+# --- Batch Correction ---
+batch_correction:
+  method: "ComBat"               # Options: "ComBat" | "none"
+  batch_variable: "Plate"
+  protected_variables:           # Variables protected from ComBat removal
+    - "Converter"                # For longitudinal
+    - "TRAJECTORY"               # For cross-sectional (ADNI)
+
+# --- Longitudinal Staging (Knight-ADRC only) ---
+longitudinal:
+  converter_trajectories:        # Which CO->AD trajectories to include
+    - "CO->CO->CO->AD"           # n=20, primary group
+    - "CO->CO->CO->CO->AD"       # n=7, included for power
+  reference_group: "stable_CO"   # Use non-converters OR earliest converter visits
+  stage_definitions:             # Map VisitsToDx to stage labels
+    0:  "T0_AD"
+    1:  "T1_preClinical"
+    2:  "T2_early"
+    3:  "T3_baseline"            # T-3 and T-4 merged here
+    4:  "T3_baseline"            # Merged with T-3
+  min_samples_per_stage: 5       # Minimum n per stage for DNB computation
+  merge_early_stages: true       # Merge T-3 and T-4 into single baseline stage
+
+# --- WGCNA Parameters ---
+wgcna:
+  soft_threshold_range: [1, 20]  # Range to test for soft thresholding
+  network_type: "signed"
+  min_module_size: 20            # Minimum proteins per module
+                                 # Use 20 for n=27; increase to 30 for larger n
+  merge_cut_height: 0.25         # Module merging threshold
+  cor_method: "bicor"            # Biweight midcorrelation (robust to outliers)
+  max_block_size: 5000           # For blockwise computation at 7K proteins
+  random_seed: 42
+
+# --- BioTIP Parameters ---
+biotip:
+  mci_bottom: 2                  # Minimum module size for MCI scoring
+  n_permutations: 1000           # Permutations for significance testing
+  n_top_modules: 3               # Number of top-MCI modules to report
+  min_cts_size: 5                # Minimum Critical Transition Signal set size
+  random_seed: 42
+
+# --- l-DNB Parameters (individual-level scoring) ---
+ldnb:
+  top_k: 100                     # Number of top proteins for IDNB score
+  reference_stage: "T3_baseline" # Stage used as reference for z-scoring
+  random_seed: 42
+
+# --- Interactome Analysis (NetMedPy) ---
+network_medicine:
+  run: true
+  interactome_path: "data/interactome.tsv"  # Human PPI network
+  n_permutations: 1000
+  null_model: "degree_matched"
+
+# --- Cross-sectional Legacy Config ---
+# These are used when analysis_mode is "cross_sectional" and map to
+# the existing config/config.yaml structure for backward compatibility.
+legacy:
+  config_path: "config/config.yaml"
+
+# --- Reproducibility ---
+reproducibility:
+  global_seed: 42
+  python_seed: 42
+  r_seed: 42
+
+# --- Logging ---
+logging:
+  level: "INFO"                  # Options: "DEBUG" | "INFO" | "WARNING"
+  log_file: "results/pipeline.log"

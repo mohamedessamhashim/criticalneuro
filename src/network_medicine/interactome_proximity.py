@@ -31,11 +31,9 @@ logger = logging.getLogger('network_medicine')
 
 # ── Hardcoded fallback lists (verified from paper) ────────────────────────────
 ADNI_DNB_PROTEINS = [
-    'HPX', 'CHGA', 'C1QA', 'C1QB', 'C1QC',
-    'PARK7', 'F2', 'PRDX6', 'CRYBB2', 'CUL3',
-    'CA1', 'PGD', 'HSP90AB1'
+    'RAC1', 'PGD', 'LANCL1', 'COPS5', 'PKM', 'PDCD6IP', 'CSNK1G1'
 ]
-PPMI_DNB_PROTEINS = ['CRYBB2']
+PPMI_DNB_PROTEINS = ['KCNIP4', 'FGF8', 'GPR6', 'MAGEA4']
 
 N_ITER       = 1000   # permutations for null model
 NULL_MODEL   = 'log_binning'   # degree-log-binning (Guney et al. 2016 standard)
@@ -80,8 +78,6 @@ def load_proteins():
 
     _GENE_COLS = ['gene_symbol', 'EntrezGeneSymbol', 'gene', 'symbol', 'protein_id']
 
-    _GENE_COLS = ['gene_symbol', 'EntrezGeneSymbol', 'gene', 'symbol', 'protein_id']
-
     def _parse_genes_from_csv(csv_path, label):
         """Load gene symbols from CSV, splitting pipe-delimited multi-gene entries."""
         df = pd.read_csv(csv_path)
@@ -100,7 +96,7 @@ def load_proteins():
         logger.info(f"Loaded {len(unique)} {label} proteins from CSV (col={col}, raw={len(raw)})")
         return unique
 
-    adni_csv = pathlib.Path('data/results/dnb/somascan/dnb_core_proteins.csv')
+    adni_csv = pathlib.Path('data/results/dnb/somascan/wgcna/dnb_core_proteins_wgcna_annotated.csv')
     if adni_csv.exists():
         result = _parse_genes_from_csv(adni_csv, 'ADNI')
         if result is not None:
@@ -108,7 +104,7 @@ def load_proteins():
     else:
         logger.warning(f"{adni_csv} missing — using hardcoded list")
 
-    ppmi_csv = pathlib.Path('data/results/ppmi/somascan/dnb_core_proteins.csv')
+    ppmi_csv = pathlib.Path('data/results/dnb/somascan_ppmi/wgcna/dnb_core_proteins_wgcna_annotated.csv')
     if ppmi_csv.exists():
         result = _parse_genes_from_csv(ppmi_csv, 'PPMI')
         if result is not None:
