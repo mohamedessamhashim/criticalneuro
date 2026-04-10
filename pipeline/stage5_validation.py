@@ -43,8 +43,9 @@ def run_validation_stage(cfg: dict) -> None:
         if "Converter" in scores.columns:
             from scipy import stats
 
-            converters = scores[scores["Converter"] == True]["IDNB"].dropna()
-            stable = scores[scores["Converter"] == False]["IDNB"].dropna()
+            is_converter = scores["Converter"].astype(str).str.lower().isin(["true", "1"])
+            converters = scores.loc[is_converter, "IDNB"].dropna()
+            stable = scores.loc[~is_converter, "IDNB"].dropna()
 
             if len(converters) > 0 and len(stable) > 0:
                 u_stat, p_val = stats.mannwhitneyu(converters, stable, alternative="greater")

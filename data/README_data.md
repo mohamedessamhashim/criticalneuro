@@ -69,14 +69,22 @@ SAMPLE002,1345.6,4567.8,3456.7,...
 | VisitDate | date | Date of blood draw (YYYY-MM-DD) | "2020-03-15" |
 | VisitNumber | integer | Visit sequence (1=first) | 3 |
 | Converter | boolean | Did this subject convert CO->AD? | TRUE |
-| VisitsToDx | integer | Visits until AD diagnosis (0=AD visit, NA for non-converters) | 2 |
+| VisitsToDx | integer | **(Optional)** Visits until AD diagnosis (0=AD visit, NA for non-converters) | 2 |
 
-### VisitsToDx explained
+### VisitsToDx (auto-computed if missing)
 
-For a converter with trajectory CO->CO->CO->AD:
+If your metadata does **not** include a `VisitsToDx` column, the pipeline will
+automatically compute it from `Diagnosis` and `VisitNumber`:
+- For each converter, it finds the first visit where `Diagnosis == "AD"`
+- Then counts backwards: `VisitsToDx = AD_visit - VisitNumber`
+- Non-converters get `VisitsToDx = NA`
+
+Example for a converter with trajectory CO->CO->CO->AD:
 - Visit 1 (CO): VisitsToDx = 3
 - Visit 2 (CO): VisitsToDx = 2
 - Visit 3 (CO): VisitsToDx = 1
 - Visit 4 (AD): VisitsToDx = 0
 
 For non-converters: VisitsToDx = NA for all visits.
+
+If you provide `VisitsToDx` in your metadata, the pipeline will use it as-is.

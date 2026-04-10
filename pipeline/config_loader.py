@@ -160,7 +160,7 @@ def validate_input_value_range(expr_path: str, log2_already_applied: bool) -> No
 
     try:
         # Read just the first few rows to check value ranges
-        df = pd.read_csv(expr_path, nrows=5)
+        df = pd.read_csv(expr_path, nrows=5, index_col=0)
         seq_cols = [c for c in df.columns if c.startswith("seq.")]
         if not seq_cols:
             logger.warning("No seq.* columns found in expression matrix — cannot validate value range")

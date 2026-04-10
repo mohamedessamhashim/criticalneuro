@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 REQUIRED_METADATA_COLS_LONGITUDINAL = [
     "SampleID", "SubjectID", "Age", "Sex", "APOE4", "Plate",
-    "Diagnosis", "VisitDate", "VisitNumber", "Converter", "VisitsToDx",
+    "Diagnosis", "VisitDate", "VisitNumber", "Converter",
 ]
 
 
@@ -77,7 +77,39 @@ def load_knight_adrc_data(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
         )
 
     logger.info("Sample overlap: %d samples", len(overlap))
+
+    # Compute VisitsToDx if not already present
+    if "VisitsToDx" not in metadata.columns:
+        logger.info("Computing VisitsToDx from Diagnosis and VisitNumber...")
+        metadata = _compute_visits_to_dx(metadata)
+    else:
+        logger.info("VisitsToDx already present in metadata — using as-is")
+
     return expr, metadata
+
+
+def _compute_visits_to_dx(metadata: pd.DataFrame) -> pd.DataFrame:
+    """Compute VisitsToDx from Diagnosis and VisitNumber.
+
+    For each converter, finds the first AD visit and counts backwards.
+    Non-converters get VisitsToDx = NaN.
+    """
+    metadata = metadata.copy()
+    metadata["VisitsToDx"] = np.nan
+
+    for subject_id, group in metadata.groupby("SubjectID"):
+        ad_visits = group.loc[group["Diagnosis"] == "AD", "VisitNumber"]
+        if len(ad_visits) > 0:
+            first_ad_visit = ad_visits.min()
+            mask = metadata["SubjectID"] == subject_id
+            metadata.loc[mask, "VisitsToDx"] = (
+                first_ad_visit - metadata.loc[mask, "VisitNumber"]
+            )
+
+    n_with = metadata["VisitsToDx"].notna().sum()
+    logger.info("Computed VisitsToDx: %d samples with values, %d NaN (non-converters)",
+                n_with, len(metadata) - n_with)
+    return metadata
 
 
 def run_qc_stage(cfg: dict) -> pd.DataFrame:
@@ -119,16 +151,14 @@ def run_qc_stage(cfg: dict) -> pd.DataFrame:
             seq_cols = [c for c in expr.columns if c.startswith("seq.")]
             expr, seq_cols = _run_full_qc(expr, seq_cols, cfg)
 
-        # Save intermediate
+        # Save intermediate (samples x proteins — consistent with downstream stages)
         output_dir = Path(cfg["output"]["dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Merge expression with metadata for downstream stages
-        expr_t = expr[seq_cols].T  # proteins x samples
-        expr_t.to_csv(output_dir / "expression_qc.csv")
+        expr[seq_cols].to_csv(output_dir / "expression_qc.csv")
         metadata.to_csv(output_dir / "metadata_staged.csv", index=False)
 
-        logger.info("QC stage complete: %d proteins x %d samples", len(seq_cols), expr.shape[0])
+        logger.info("QC stage complete: %d samples x %d proteins", expr.shape[0], len(seq_cols))
         return expr
 
     else:

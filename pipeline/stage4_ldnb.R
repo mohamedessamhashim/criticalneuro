@@ -101,7 +101,8 @@ for (j in seq_along(all_sample_ids)) {
 
   # IDNB: mean of top-k |z-scores|
   local_scores <- abs(z_scores)
-  top_idx <- order(local_scores, decreasing = TRUE)[1:top_k]
+  k <- min(top_k, length(local_scores))
+  top_idx <- order(local_scores, decreasing = TRUE)[1:k]
   idnb_scores[j] <- mean(local_scores[top_idx], na.rm = TRUE)
 }
 
