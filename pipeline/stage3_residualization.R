@@ -25,6 +25,10 @@ cfg <- yaml.load_file(opt$config)
 # --- Set seed ---
 set.seed(cfg$reproducibility$r_seed)
 
+# Use na.exclude so residuals() pads NAs at omitted positions,
+# preserving vector length to match the original expression matrix rows.
+options(na.action = "na.exclude")
+
 # --- Load data ---
 expr <- read.csv(opt$input, row.names = 1, check.names = FALSE)
 metadata <- read.csv(opt$metadata, stringsAsFactors = FALSE)
@@ -90,20 +94,21 @@ if (cfg$analysis_mode == "longitudinal") {
     fit_data <- data.frame(y = as.numeric(expr[, seq_cols[i]]), metadata,
                             check.names = FALSE)
 
-    tryCatch({
+    res_vector <- tryCatch({
       fit <- lmer(as.formula(formula_str), data = fit_data,
                    REML = FALSE,
                    control = lmerControl(optimizer = "bobyqa",
                                           optCtrl = list(maxfun = 1e5)))
-      residuals_mat[, i] <- residuals(fit)
-      n_lme_success <- n_lme_success + 1
+      n_lme_success <<- n_lme_success + 1
+      residuals(fit)
     }, error = function(e) {
       # If lme4 fails, fall back to OLS
       ols_formula <- as.formula(sub(" \\+ \\(1\\|.*\\)", "", formula_str))
       fit_ols <- lm(ols_formula, data = fit_data)
-      residuals_mat[, i] <<- residuals(fit_ols)
       n_ols_fallback <<- n_ols_fallback + 1
+      residuals(fit_ols)
     })
+    residuals_mat[, i] <- res_vector
   }
 
   cat(sprintf("[Residualize] Complete: %d lme4, %d OLS fallback\n",

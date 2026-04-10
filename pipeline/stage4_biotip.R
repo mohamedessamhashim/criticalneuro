@@ -58,6 +58,7 @@ if (cfg$analysis_mode == "longitudinal") {
   stage_map <- cfg$longitudinal$stage_definitions
   metadata$Stage <- sapply(metadata$VisitsToDx, function(v) {
     if (is.na(v)) return("stable_CO")
+    if (v < 0)    return("post_AD")   # Post-diagnosis follow-ups — exclude from analysis
     key <- as.character(v)
     if (key %in% names(stage_map)) stage_map[[key]] else "stable_CO"
   })
@@ -103,38 +104,48 @@ module_list <- lapply(module_list, function(prots) {
 module_list <- module_list[sapply(module_list, length) >= cfg$biotip$mci_bottom]
 cat(sprintf("[BioTIP] Testing %d WGCNA modules\n", length(module_list)))
 
-# --- Score modules using MCI (Module-Criticality Index) ---
+# --- Convert WGCNA modules to BioTIP cluster membership format ---
+# BioTIP getMCI expects:
+#   groups:  list (per state) of named integer vectors (gene → cluster number)
+#   countsL: list (per state) of expression matrices (genes × samples)
 set.seed(cfg$reproducibility$r_seed)
 
-MCI_results <- getMCI(
-  x         = expr,
-  sampleL   = samplesL,
-  MCIbottom = cfg$biotip$mci_bottom
-)
+# Build membership vector from WGCNA module assignments
+# Only include proteins present in expression matrix
+valid_modules <- modules[modules$AptName %in% rownames(expr), ]
+module_colors <- valid_modules$Module
+module_int <- as.integer(factor(module_colors))
+names(module_int) <- valid_modules$AptName
 
-# --- Identify top-scoring modules ---
-topMCI <- getTopMCI(
-  MCIl      = MCI_results,
-  maxMCIl   = NULL,
-  n         = cfg$biotip$n_top_modules,
-  adjust    = TRUE
-)
+# Replicate membership for each state (WGCNA gives global modules)
+groups <- lapply(stage_order, function(s) module_int)
+names(groups) <- stage_order
 
-# --- Get maximum MCI members (CTS proteins) ---
+# Build countsL: expression subsets per stage (genes × samples)
+countsL <- lapply(stage_order, function(s) {
+  sids <- samplesL[[s]]
+  expr[names(module_int), sids, drop = FALSE]
+})
+names(countsL) <- stage_order
+
+cat(sprintf("[BioTIP] Membership vector: %d proteins in %d modules\n",
+            length(module_int), length(unique(module_int))))
+
+# --- Score modules using MCI (Module-Criticality Index) ---
+MCI_results <- getMCI(groups, countsL, fun = "BioTIP")
+
+# --- Get maximum MCI members (biomodule per state) ---
 maxMCI_members <- getMaxMCImember(
-  MCIl      = MCI_results,
-  geneList  = module_list,
-  topMCI    = topMCI
+  MCI_results[[1]],   # membersL: module membership per state
+  MCI_results[[2]],   # MCIl: MCI scores per state
+  minsize = cfg$biotip$min_cts_size
 )
 
-# --- Get statistics for the peak stage ---
-maxStats <- getMaxStats(MCI_results, maxMCI_members)
+# --- Get peak-stage statistics ---
+maxStats <- getMaxStats(MCI_results[["MCI"]], maxMCI_members[[1]])
 
 # --- Extract Critical Transition Signal (CTS) ---
-CTS_list <- getCTS(
-  maxMCIms  = maxMCI_members,
-  min.size  = cfg$biotip$min_cts_size
-)
+CTS_list <- getCTS(maxStats, maxMCI_members[[2]])
 
 if (length(CTS_list) == 0 || length(CTS_list[[1]]) == 0) {
   cat("[BioTIP] WARNING: No CTS proteins identified. Check module sizes and sample counts.\n")
@@ -160,26 +171,30 @@ cat(sprintf("[BioTIP] Running %d permutations for significance testing...\n",
 set.seed(cfg$reproducibility$r_seed)
 
 Ic_random <- simulation_Ic(
-  eset       = expr,
-  sampleL    = samplesL,
-  genes      = cts_proteins,
-  B          = cfg$biotip$n_permutations,
-  fun        = "BioTIP"
+  obs.x   = length(cts_proteins),
+  sampleL = samplesL,
+  counts  = expr,
+  B       = cfg$biotip$n_permutations,
+  fun     = "BioTIP"
 )
 
-# Compute empirical p-value
-observed_MCI <- max(unlist(lapply(MCI_results, function(x) {
-  if (is.numeric(x)) max(x, na.rm = TRUE) else NA
-})), na.rm = TRUE)
+# Compute observed Ic score for CTS proteins
+observed_Ic <- getIc(
+  counts  = expr,
+  sampleL = samplesL,
+  genes   = cts_proteins,
+  fun     = "BioTIP"
+)
+observed_MCI <- max(observed_Ic, na.rm = TRUE)
 
 empirical_p <- mean(Ic_random >= observed_MCI, na.rm = TRUE)
 
-# Identify peak stage
+# Identify peak stage from MCI scores
+# MCI_results[["MCI"]] is a list per state with MCI scores per module
 mci_per_stage <- sapply(stage_order, function(s) {
-  idx <- which(names(samplesL) == s)
-  if (length(idx) > 0 && idx <= length(MCI_results)) {
-    val <- MCI_results[[idx]]
-    if (is.numeric(val) && length(val) > 0) max(val, na.rm = TRUE) else NA
+  mci_vals <- MCI_results[["MCI"]][[s]]
+  if (!is.null(mci_vals) && is.numeric(mci_vals) && length(mci_vals) > 0) {
+    max(mci_vals, na.rm = TRUE)
   } else NA
 })
 peak_stage <- stage_order[which.max(mci_per_stage)]

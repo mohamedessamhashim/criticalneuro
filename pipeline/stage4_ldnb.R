@@ -56,6 +56,7 @@ if (cfg$analysis_mode == "longitudinal") {
   stage_map <- cfg$longitudinal$stage_definitions
   metadata$Stage <- sapply(metadata$VisitsToDx, function(v) {
     if (is.na(v)) return("stable_CO")
+    if (v < 0)    return("post_AD")   # Post-diagnosis follow-ups — exclude from analysis
     key <- as.character(v)
     if (key %in% names(stage_map)) stage_map[[key]] else "stable_CO"
   })
