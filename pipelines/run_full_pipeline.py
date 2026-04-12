@@ -566,9 +566,10 @@ def run_validation(config: dict) -> None:
     csd_scores = pd.read_csv(_csd_path) if _csd_path.exists() else pd.DataFrame(columns=["RID"])
 
     # Load SomaScan sDNB scores
-    sdnb_path = Path(config["paths"]["results_dnb_somascan"]) / "sdnb_scores.csv"
+    sdnb_path = Path(config["paths"]["results_dnb_somascan"]) / "wgcna" / "sdnb_scores_wgcna.csv"
     if not sdnb_path.exists():
-        # Fall back to legacy location
+        sdnb_path = Path(config["paths"]["results_dnb_somascan"]) / "sdnb_scores.csv"
+    if not sdnb_path.exists():
         sdnb_path = Path(config["paths"]["results_dnb"]) / "sdnb_scores.csv"
     if sdnb_path.exists():
         sdnb_scores = pd.read_csv(sdnb_path)[["RID", "sdnb_score"]]
@@ -607,6 +608,18 @@ def run_validation(config: dict) -> None:
     # ROC curves
     predictor_cols = ["composite_csd_score", "sdnb_score"] + biomarker_cols
     merged_for_roc = analysis_df.merge(csd_scores, on="RID", how="inner")
+
+    # Exclude post-diagnosis samples (negative MONTHS_TO_CONVERSION)
+    if "MONTHS_TO_CONVERSION" in merged_for_roc.columns:
+        post_dx = merged_for_roc["MONTHS_TO_CONVERSION"].fillna(0) < 0
+        n_excluded = post_dx.sum()
+        if n_excluded > 0:
+            logger.info(
+                "Excluding %d post-diagnosis samples (negative MONTHS_TO_CONVERSION)",
+                n_excluded,
+            )
+            merged_for_roc = merged_for_roc[~post_dx]
+
     roc_df, delong_df = compute_roc_curves(
         merged_for_roc, predictor_cols, "IS_CONVERTER",
         config["validation"]["time_horizons_months"],

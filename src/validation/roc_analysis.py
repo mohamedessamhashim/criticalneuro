@@ -115,8 +115,12 @@ def compute_roc_curves(
 
         if "MONTHS_TO_CONVERSION" in horizon_df.columns:
             # For converters: positive if conversion within horizon
+            # Exclude post-diagnosis samples (negative MONTHS_TO_CONVERSION)
             is_converter = horizon_df[outcome_col] == 1
-            within_horizon = horizon_df["MONTHS_TO_CONVERSION"] <= horizon
+            within_horizon = (
+                (horizon_df["MONTHS_TO_CONVERSION"] > 0)
+                & (horizon_df["MONTHS_TO_CONVERSION"] <= horizon)
+            )
             horizon_df["horizon_outcome"] = (
                 is_converter & within_horizon
             ).astype(int)

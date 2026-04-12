@@ -203,9 +203,15 @@ def run_sdnb_analysis(
                         if pd.notna(v["months_to_conv"]) and v["months_to_conv"] > 0]
             if pre_conv:
                 selected = min(pre_conv, key=lambda v: v["months_to_conv"])
+            else:
+                # Converter with ONLY post-diagnosis visits — exclude entirely
+                logger.debug(
+                    "RID %s: converter with no pre-diagnosis visits, excluding", rid
+                )
+                continue
 
         if selected is None:
-            # Stable/other, or converter fallback: latest EXAMDATE
+            # Stable/other: latest EXAMDATE
             dated = [v for v in visit_scores if pd.notna(v["examdate"])]
             if dated:
                 selected = max(dated, key=lambda v: v["examdate"])

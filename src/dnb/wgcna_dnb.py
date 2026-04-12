@@ -188,6 +188,214 @@ def score_modules_dnb(
     return results_df
 
 
+def _compute_stage_components(
+    X_group: np.ndarray,
+    X_outside: np.ndarray,
+    epsilon: float,
+) -> dict:
+    """Compute DNB score and its components for a single stage slice."""
+    dnb_score = compute_dnb_score(X_group, X_outside, epsilon=epsilon)
+    mean_sd = float(np.nanstd(X_group, axis=0, ddof=1).mean())
+
+    n_prot = X_group.shape[1]
+    if n_prot >= 2:
+        corr_mat = np.corrcoef(X_group.T)
+        upper = corr_mat[np.triu_indices(n_prot, k=1)]
+        valid = upper[np.isfinite(upper)]
+        mean_pcc_within = float(np.abs(valid).mean()) if len(valid) > 0 else 0.0
+    else:
+        mean_pcc_within = 1.0
+
+    if X_outside.shape[1] > 0:
+        X_all = np.hstack([X_group, X_outside])
+        col_means = np.nanmean(X_all, axis=0)
+        inds = np.where(np.isnan(X_all))
+        if inds[0].size > 0:
+            X_all[inds] = np.take(col_means, inds[1])
+        corr_all = np.corrcoef(X_all.T)
+        cross_block = corr_all[:n_prot, n_prot:]
+        valid_cross = cross_block[np.isfinite(cross_block)]
+        mean_pcc_outside = float(np.abs(valid_cross).mean()) if len(valid_cross) > 0 else 0.0
+    else:
+        mean_pcc_outside = 0.0
+
+    return {
+        "dnb_score": dnb_score,
+        "mean_sd": mean_sd,
+        "mean_pcc_within": mean_pcc_within,
+        "mean_pcc_outside": mean_pcc_outside,
+    }
+
+
+def compute_per_stage_dnb(
+    df: pd.DataFrame,
+    module_proteins: list[str],
+    outside_proteins: list[str],
+    trajectory_groups: list[str],
+    epsilon: float = 1e-8,
+    n_bootstrap: int = 1000,
+    random_seed: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Compute DNB score of a module separately for each trajectory stage.
+
+    This produces the per-stage comparison table showing how DNB rises
+    as disease progresses from CN through MCI to Dementia, with bootstrap
+    95% confidence intervals and permutation p-values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Full proteomics DataFrame with TRAJECTORY column.
+    module_proteins : list[str]
+        kME-filtered proteins from the transition module.
+    outside_proteins : list[str]
+        All non-module proteins.
+    trajectory_groups : list[str]
+        Trajectory labels to score (in clinical order).
+    epsilon : float
+        Denominator stabilizer.
+    n_bootstrap : int
+        Number of bootstrap resamples for CIs (default 1000).
+    random_seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        (stage_scores, permutation_results)
+        stage_scores: Per-stage DNB scores with CI columns.
+        permutation_results: Pairwise permutation test p-values.
+    """
+    rng = np.random.default_rng(random_seed)
+    results = []
+
+    # Subsample outside proteins for bootstrap/permutation tractability.
+    # With ~60 module proteins x 500 outside, we get 30,000 cross-correlations
+    # per iteration — more than sufficient for stable PCC_outside estimates.
+    # Observed (point estimate) scores use the full outside set.
+    max_outside = 500
+    if len(outside_proteins) > max_outside:
+        outside_sub_idx = rng.choice(len(outside_proteins), max_outside, replace=False)
+        outside_sub = [outside_proteins[i] for i in sorted(outside_sub_idx)]
+    else:
+        outside_sub = outside_proteins
+
+    for stage in trajectory_groups:
+        mask = df["TRAJECTORY"] == stage
+        n = mask.sum()
+        if n < 3:
+            logger.warning("Stage '%s': %d samples (< 3), skipping", stage, n)
+            continue
+
+        X_group = df.loc[mask, module_proteins].values
+        X_outside_full = df.loc[mask, outside_proteins].values
+        X_outside_sub = df.loc[mask, outside_sub].values
+
+        # Point estimates use full outside set
+        obs = _compute_stage_components(X_group, X_outside_full, epsilon)
+
+        # Bootstrap CIs use subsampled outside for speed
+        boot_dnb = []
+        boot_pcc_out = []
+        for _ in range(n_bootstrap):
+            idx = rng.choice(n, n, replace=True)
+            b_group = X_group[idx]
+            b_outside = X_outside_sub[idx]
+            b = _compute_stage_components(b_group, b_outside, epsilon)
+            boot_dnb.append(b["dnb_score"])
+            boot_pcc_out.append(b["mean_pcc_outside"])
+
+        results.append({
+            "stage": stage,
+            "dnb_score": obs["dnb_score"],
+            "dnb_ci_lower": float(np.percentile(boot_dnb, 2.5)),
+            "dnb_ci_upper": float(np.percentile(boot_dnb, 97.5)),
+            "n_samples": n,
+            "mean_sd": obs["mean_sd"],
+            "mean_pcc_within": obs["mean_pcc_within"],
+            "mean_pcc_outside": obs["mean_pcc_outside"],
+            "pcc_outside_ci_lower": float(np.percentile(boot_pcc_out, 2.5)),
+            "pcc_outside_ci_upper": float(np.percentile(boot_pcc_out, 97.5)),
+        })
+
+    results_df = pd.DataFrame(results)
+
+    # Permutation tests: pairwise differences in DNB score
+    perm_results = []
+    stage_data_full = {}
+    stage_data_sub = {}
+    for stage in trajectory_groups:
+        mask = df["TRAJECTORY"] == stage
+        if mask.sum() >= 3:
+            stage_data_full[stage] = (
+                df.loc[mask, module_proteins].values,
+                df.loc[mask, outside_proteins].values,
+            )
+            stage_data_sub[stage] = (
+                df.loc[mask, module_proteins].values,
+                df.loc[mask, outside_sub].values,
+            )
+
+    stages_list = list(stage_data_full.keys())
+    for i in range(len(stages_list)):
+        for j in range(i + 1, len(stages_list)):
+            s_a, s_b = stages_list[i], stages_list[j]
+            # Observed difference uses full outside set
+            obs_a = compute_dnb_score(*stage_data_full[s_a], epsilon)
+            obs_b = compute_dnb_score(*stage_data_full[s_b], epsilon)
+            obs_diff = obs_b - obs_a
+
+            # Permutation uses subsampled outside for speed
+            X_a_grp, X_a_out = stage_data_sub[s_a]
+            X_b_grp, X_b_out = stage_data_sub[s_b]
+            n_a, n_b = len(X_a_grp), len(X_b_grp)
+            pooled_grp = np.vstack([X_a_grp, X_b_grp])
+            pooled_out = np.vstack([X_a_out, X_b_out])
+
+            # Compute observed difference with subsampled outside for
+            # consistent comparison with permuted differences
+            obs_a_sub = compute_dnb_score(X_a_grp, X_a_out, epsilon)
+            obs_b_sub = compute_dnb_score(X_b_grp, X_b_out, epsilon)
+            obs_diff_sub = obs_b_sub - obs_a_sub
+
+            n_exceed = 0
+            for _ in range(n_bootstrap):
+                perm_idx = rng.permutation(n_a + n_b)
+                p_a_grp = pooled_grp[perm_idx[:n_a]]
+                p_a_out = pooled_out[perm_idx[:n_a]]
+                p_b_grp = pooled_grp[perm_idx[n_a:]]
+                p_b_out = pooled_out[perm_idx[n_a:]]
+                perm_diff = (
+                    compute_dnb_score(p_b_grp, p_b_out, epsilon)
+                    - compute_dnb_score(p_a_grp, p_a_out, epsilon)
+                )
+                if abs(perm_diff) >= abs(obs_diff_sub):
+                    n_exceed += 1
+
+            p_value = (n_exceed + 1) / (n_bootstrap + 1)
+            perm_results.append({
+                "stage_a": s_a,
+                "stage_b": s_b,
+                "dnb_diff": obs_diff,
+                "p_value": p_value,
+            })
+
+    perm_df = pd.DataFrame(perm_results)
+
+    if len(results_df) > 0:
+        logger.info(
+            "Per-stage DNB scores (with 95%% CI):\n%s",
+            results_df.to_string(index=False),
+        )
+    if len(perm_df) > 0:
+        logger.info(
+            "Permutation test results:\n%s",
+            perm_df.to_string(index=False),
+        )
+
+    return results_df, perm_df
+
+
 def identify_transition_module(module_scores: pd.DataFrame) -> str | None:
     """Identify the transition module (highest DNB score).
 
@@ -402,6 +610,28 @@ def run_wgcna_dnb_analysis(
         empty = pd.DataFrame()
         return module_scores, empty, empty
 
+    # Step 2b: Per-stage DNB scoring for the transition module
+    wgcna_cfg = config["wgcna"]
+    kme_threshold = wgcna_cfg["kme_threshold"]
+    available_proteins = set(protein_cols)
+    stage_module_proteins = wgcna_df[
+        (wgcna_df["module"] == transition_module) & (wgcna_df["kME"] >= kme_threshold)
+    ]["protein"].tolist()
+    stage_module_proteins = [p for p in stage_module_proteins if p in available_proteins]
+    stage_outside_proteins = [p for p in protein_cols if p not in set(stage_module_proteins)]
+
+    trajectory_groups = [
+        g for g in ["CN_amyloid_negative", "CN_amyloid_positive", "stable_MCI", "MCI_to_Dementia"]
+        if (df["TRAJECTORY"] == g).sum() >= 3
+    ]
+    bootstrap_n = config.get("validation", {}).get("bootstrap_n", 1000)
+    seed = config.get("random_seed", 42)
+    stage_dnb_scores, stage_perm = compute_per_stage_dnb(
+        df, stage_module_proteins, stage_outside_proteins,
+        trajectory_groups, epsilon=config["dnb"]["epsilon"],
+        n_bootstrap=bootstrap_n, random_seed=seed,
+    )
+
     # Step 3: Extract core proteins via dual-filter
     core_proteins = extract_wgcna_core_proteins(
         df,
@@ -448,21 +678,126 @@ def run_wgcna_dnb_analysis(
     module_scores.to_csv(results_dir / "module_dnb_scores.csv", index=False)
     core_proteins.to_csv(results_dir / "dnb_core_proteins_wgcna.csv", index=False)
     sdnb_scores.to_csv(results_dir / "sdnb_scores_wgcna.csv", index=False)
+    if len(stage_dnb_scores) > 0:
+        stage_dnb_scores.to_csv(results_dir / "stage_dnb_scores.csv", index=False)
+    if len(stage_perm) > 0:
+        stage_perm.to_csv(results_dir / "stage_dnb_permutation.csv", index=False)
+
+    # Step 5: Module eigengene ROC for clinical utility
+    try:
+        from sklearn.decomposition import PCA
+        from sklearn.metrics import roc_auc_score
+
+        converter_label_val = converter_label or "MCI_to_Dementia"
+        stable_label = "stable_MCI"
+        roc_mask = df["TRAJECTORY"].isin([stable_label, converter_label_val])
+        roc_df = df.loc[roc_mask].copy()
+
+        if len(roc_df) >= 10 and roc_df["TRAJECTORY"].nunique() == 2:
+            X_eigen = roc_df[stage_module_proteins].values
+            # Impute NaN with column means
+            col_means_e = np.nanmean(X_eigen, axis=0)
+            nan_inds = np.where(np.isnan(X_eigen))
+            if nan_inds[0].size > 0:
+                X_eigen[nan_inds] = np.take(col_means_e, nan_inds[1])
+
+            pca = PCA(n_components=1, random_state=seed)
+            eigengene = pca.fit_transform(X_eigen).ravel()
+
+            y_roc = (roc_df["TRAJECTORY"] == converter_label_val).astype(int).values
+            auc = roc_auc_score(y_roc, eigengene)
+            # Flip if AUC < 0.5
+            if auc < 0.5:
+                eigengene = -eigengene
+                auc = 1.0 - auc
+
+            # Bootstrap CI
+            rng_roc = np.random.default_rng(seed)
+            boot_aucs = []
+            for _ in range(bootstrap_n):
+                idx = rng_roc.choice(len(y_roc), len(y_roc), replace=True)
+                y_b, s_b = y_roc[idx], eigengene[idx]
+                if y_b.sum() > 0 and y_b.sum() < len(y_b):
+                    b_auc = roc_auc_score(y_b, s_b)
+                    boot_aucs.append(b_auc)
+
+            ci_lo = float(np.percentile(boot_aucs, 2.5)) if boot_aucs else np.nan
+            ci_hi = float(np.percentile(boot_aucs, 97.5)) if boot_aucs else np.nan
+
+            eigen_roc = pd.DataFrame([{
+                "module": transition_module,
+                "n_proteins": len(stage_module_proteins),
+                "n_stable_mci": int((y_roc == 0).sum()),
+                "n_converters": int((y_roc == 1).sum()),
+                "auc": auc,
+                "auc_ci_lower": ci_lo,
+                "auc_ci_upper": ci_hi,
+                "variance_explained": float(pca.explained_variance_ratio_[0]),
+            }])
+            eigen_roc.to_csv(results_dir / "eigengene_roc_results.csv", index=False)
+            logger.info(
+                "Eigengene ROC: AUC = %.3f (95%% CI: %.3f–%.3f), variance explained = %.1f%%",
+                auc, ci_lo, ci_hi, pca.explained_variance_ratio_[0] * 100,
+            )
+        else:
+            logger.warning("Insufficient samples for eigengene ROC (%d)", len(roc_df))
+    except Exception as exc:
+        logger.warning("Eigengene ROC analysis failed: %s", exc)
 
     # Annotate with UniProt if SomaScan
-    if platform_label == "somascan" and len(core_proteins) > 0:
+    if platform_label.startswith("somascan") and len(core_proteins) > 0:
         uniprot_map_path = Path(config["paths"].get(
             "somascan_uniprot_map", "data/reference/somascan_uniprot_map.csv"
         ))
         if uniprot_map_path.exists():
             try:
                 name_map = pd.read_csv(uniprot_map_path, dtype=str)
+                # Primary join: Analyte-derived protein ID (e.g. X7011.8 -> seq.7011.8)
                 name_map["protein"] = "seq." + name_map["Analytes"].str[1:]
+                annot_cols = ["UniProt", "EntrezGeneSymbol", "TargetFullName"]
                 core_annotated = core_proteins.merge(
-                    name_map[["protein", "UniProt", "EntrezGeneSymbol", "TargetFullName"]],
+                    name_map[["protein"] + annot_cols],
                     on="protein",
                     how="left",
                 )
+                # Fallback join via SomaId for unmatched proteins (PPMI uses
+                # different aptamer versions that share SomaId but have
+                # different SeqId numbers, e.g. SL007011 covers both
+                # X11591.43 in ADNI and seq.7011.8 in PPMI)
+                # Manual annotations for PPMI aptamers not in ADNI reference
+                _manual_annot = {
+                    "seq.14757.144": ("P55075", "FGF8", "Fibroblast growth factor 8"),
+                    "seq.10485.56": ("P43358", "MAGEA4", "MAGE family member A4"),
+                }
+                for prot, (uniprot, symbol, fullname) in _manual_annot.items():
+                    mask_man = core_annotated["protein"] == prot
+                    if mask_man.any() and core_annotated.loc[mask_man, "UniProt"].isna().all():
+                        core_annotated.loc[mask_man, "UniProt"] = uniprot
+                        core_annotated.loc[mask_man, "EntrezGeneSymbol"] = symbol
+                        core_annotated.loc[mask_man, "TargetFullName"] = fullname
+
+                unmapped = core_annotated["UniProt"].isna()
+                if unmapped.any() and "SomaId" in name_map.columns:
+                    # Extract numeric part from protein ID: seq.7011.8 -> 7011
+                    core_annotated["_seq_base"] = (
+                        core_annotated["protein"]
+                        .str.replace(r"^seq\.", "", regex=True)
+                        .str.split(".")
+                        .str[0]
+                    )
+                    # Build SomaId lookup: SL007011 -> 7011
+                    soma_lookup = name_map.drop_duplicates("SomaId").copy()
+                    soma_lookup["_soma_base"] = (
+                        soma_lookup["SomaId"]
+                        .str.replace(r"^SL0*", "", regex=True)
+                    )
+                    for idx in core_annotated[unmapped].index:
+                        seq_base = core_annotated.loc[idx, "_seq_base"]
+                        match = soma_lookup[soma_lookup["_soma_base"] == seq_base]
+                        if len(match) > 0:
+                            for col in annot_cols:
+                                core_annotated.loc[idx, col] = match.iloc[0][col]
+                    core_annotated = core_annotated.drop(columns=["_seq_base"])
                 core_annotated.to_csv(
                     results_dir / "dnb_core_proteins_wgcna_annotated.csv", index=False
                 )

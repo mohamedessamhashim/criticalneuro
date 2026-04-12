@@ -33,7 +33,7 @@ logger = logging.getLogger('network_medicine')
 ADNI_DNB_PROTEINS = [
     'RAC1', 'PGD', 'LANCL1', 'COPS5', 'PKM', 'PDCD6IP', 'CSNK1G1'
 ]
-PPMI_DNB_PROTEINS = ['KCNIP4', 'FGF8', 'GPR6', 'MAGEA4']
+PPMI_DNB_PROTEINS = ['PRC1', 'MAFG', 'FGF8', 'MAGEA4']  # seq.7011.8, seq.14605.2, seq.14757.144, seq.10485.56
 
 N_ITER       = 1000   # permutations for null model
 NULL_MODEL   = 'log_binning'   # degree-log-binning (Guney et al. 2016 standard)
