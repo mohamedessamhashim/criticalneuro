@@ -320,7 +320,10 @@ def compute_per_stage_dnb(
 
     results_df = pd.DataFrame(results)
 
-    # Permutation tests: pairwise differences in DNB score
+    # Permutation tests: pairwise differences in PCC_outside
+    # PCC_outside is the key DNB indicator of approaching a critical
+    # transition (monotonic decline), whereas the composite DNB score
+    # is dominated by SD variance and lacks discriminative power.
     perm_results = []
     stage_data_full = {}
     stage_data_sub = {}
@@ -340,10 +343,11 @@ def compute_per_stage_dnb(
     for i in range(len(stages_list)):
         for j in range(i + 1, len(stages_list)):
             s_a, s_b = stages_list[i], stages_list[j]
-            # Observed difference uses full outside set
-            obs_a = compute_dnb_score(*stage_data_full[s_a], epsilon)
-            obs_b = compute_dnb_score(*stage_data_full[s_b], epsilon)
-            obs_diff = obs_b - obs_a
+            # Observed values use full outside set
+            obs_a = _compute_stage_components(*stage_data_full[s_a], epsilon)
+            obs_b = _compute_stage_components(*stage_data_full[s_b], epsilon)
+            obs_dnb_diff = obs_b["dnb_score"] - obs_a["dnb_score"]
+            obs_pcc_diff = obs_b["mean_pcc_outside"] - obs_a["mean_pcc_outside"]
 
             # Permutation uses subsampled outside for speed
             X_a_grp, X_a_out = stage_data_sub[s_a]
@@ -352,11 +356,13 @@ def compute_per_stage_dnb(
             pooled_grp = np.vstack([X_a_grp, X_b_grp])
             pooled_out = np.vstack([X_a_out, X_b_out])
 
-            # Compute observed difference with subsampled outside for
-            # consistent comparison with permuted differences
-            obs_a_sub = compute_dnb_score(X_a_grp, X_a_out, epsilon)
-            obs_b_sub = compute_dnb_score(X_b_grp, X_b_out, epsilon)
-            obs_diff_sub = obs_b_sub - obs_a_sub
+            # Observed PCC_outside difference with subsampled outside
+            # for consistent comparison with permuted differences
+            obs_a_sub = _compute_stage_components(X_a_grp, X_a_out, epsilon)
+            obs_b_sub = _compute_stage_components(X_b_grp, X_b_out, epsilon)
+            obs_pcc_diff_sub = (
+                obs_b_sub["mean_pcc_outside"] - obs_a_sub["mean_pcc_outside"]
+            )
 
             n_exceed = 0
             for _ in range(n_bootstrap):
@@ -365,18 +371,20 @@ def compute_per_stage_dnb(
                 p_a_out = pooled_out[perm_idx[:n_a]]
                 p_b_grp = pooled_grp[perm_idx[n_a:]]
                 p_b_out = pooled_out[perm_idx[n_a:]]
+                perm_a = _compute_stage_components(p_a_grp, p_a_out, epsilon)
+                perm_b = _compute_stage_components(p_b_grp, p_b_out, epsilon)
                 perm_diff = (
-                    compute_dnb_score(p_b_grp, p_b_out, epsilon)
-                    - compute_dnb_score(p_a_grp, p_a_out, epsilon)
+                    perm_b["mean_pcc_outside"] - perm_a["mean_pcc_outside"]
                 )
-                if abs(perm_diff) >= abs(obs_diff_sub):
+                if abs(perm_diff) >= abs(obs_pcc_diff_sub):
                     n_exceed += 1
 
             p_value = (n_exceed + 1) / (n_bootstrap + 1)
             perm_results.append({
                 "stage_a": s_a,
                 "stage_b": s_b,
-                "dnb_diff": obs_diff,
+                "pcc_outside_diff": obs_pcc_diff,
+                "dnb_diff": obs_dnb_diff,
                 "p_value": p_value,
             })
 

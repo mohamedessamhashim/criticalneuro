@@ -16,15 +16,11 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 FIGURE_SCRIPTS = [
-    'src/figures/figure_01_dnb_stages.py',
-    'src/figures/figure_02_core_proteins.py',
-    'src/figures/figure_03_sdnb.py',
-    'src/figures/figure_04_biomarker_heatmap.py',
-    'src/figures/figure_05_ppmi_replication.py',
-    'src/figures/figure_06_crybb2_crossdisease.py',
-    'src/figures/figure_07_summary.py',
-    'src/figures/figure_08_netmed_lcc.py',
-    'src/figures/figure_09_netmed_proximity.py',
+    'src/figures/figure_01_soft_threshold.py',
+    'src/figures/figure_02_module_overview.py',
+    'src/figures/figure_03_perstage_dnb.py',
+    'src/figures/figure_04_core_network.py',
+    'src/figures/figure_05_proximity.py',
 ]
 
 
